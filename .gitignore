@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+workspace/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+.venv/
+venv/
+.DS_Store
+app/node_modules/
+app/dist/
+*.log
