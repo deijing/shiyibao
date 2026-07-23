@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 import json
 import logging
 from pathlib import Path
@@ -50,7 +51,7 @@ async def translate_subtitles(
     target_lang: str = "zh",
     gemini_model: str = "gemini-2.0-flash",
     source_lang: str = "auto",
-    log_cb: None | callable = None,
+    log_cb: Callable[..., None] | None = None,
 ) -> list[dict]:
     """Translate every segment's source_text into target_lang via the Gemini API."""
     target_lang_name = LANG_NAMES.get(target_lang, "Chinese")

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from collections.abc import Callable
 import logging
 import re
 import wave
@@ -158,7 +159,7 @@ async def synthesize_all(
     segments: list[dict],
     voice: str,
     api_key: str,
-    log_cb: None | callable = None,
+    log_cb: Callable[..., None] | None = None,
 ) -> Path:
     """Synthesize natural translated utterances, then assemble the dub track."""
     seg_dir = task_dir / "tts_segments"

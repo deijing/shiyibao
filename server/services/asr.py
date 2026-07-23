@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 import json
 import time
 from pathlib import Path
@@ -17,7 +18,7 @@ _POLL_INTERVAL = 1.0
 _MAX_WAIT_SECONDS = 600
 
 
-def _transcribe_sync(audio_path: Path, log_cb: None | callable = None) -> list[dict]:
+def _transcribe_sync(audio_path: Path, log_cb: Callable[..., None] | None = None) -> list[dict]:
     asr = BcutASR(str(audio_path))
     asr.session.headers.update(BROWSER_HEADERS)
 
@@ -63,7 +64,11 @@ def _transcribe_sync(audio_path: Path, log_cb: None | callable = None) -> list[d
     return segments
 
 
-async def transcribe(task_dir: Path, audio_path: Path, log_cb: None | callable = None) -> list[dict]:
+async def transcribe(
+    task_dir: Path,
+    audio_path: Path,
+    log_cb: Callable[..., None] | None = None,
+) -> list[dict]:
     """Transcribe the extracted audio via BcutASR (blocking, run in a thread)."""
     segments = await asyncio.to_thread(_transcribe_sync, audio_path, log_cb)
     out_path = task_dir / "subtitles_src.json"
