@@ -1,140 +1,243 @@
 import { useState, useCallback, useEffect } from 'react'
+import { Routes, Route, useNavigate, useParams, Navigate } from 'react-router-dom'
+import { AlertTriangle, ExternalLink, Loader2 } from 'lucide-react'
 import { useTheme } from './hooks/useTheme'
-import Navbar, { type Page } from './components/Navbar'
+import { GithubIcon } from './components/GithubIcon'
+import { ChangelogModal } from './components/ChangelogModal'
+import Navbar from './components/Navbar'
 import UploadState from './components/UploadState'
 import ProcessingState from './components/ProcessingState'
 import ResultState from './components/ResultState'
+import BatchState from './components/BatchState'
 import HistoryView from './components/HistoryView'
 import VoiceLibrary from './components/VoiceLibrary'
 import PerformancePage from './components/PerformancePage'
-import { getTaskStatus } from './lib/api'
+import { getRuntimeHealth, getTaskStatus, type RuntimeHealth, type TaskStatus } from './lib/api'
 import { clearActiveTaskId, loadActiveTaskId, saveActiveTaskId } from './lib/task-session'
 
-type FlowState = 'upload' | 'processing' | 'result'
-
-export default function App() {
-  const [page, setPage] = useState<Page>('home')
-  const [currentState, setCurrentState] = useState<FlowState>('upload')
-  const [transitioning, setTransitioning] = useState(false)
-  const [taskId, setTaskId] = useState<string | null>(null)
-  const [restoringTask, setRestoringTask] = useState(true)
-  const { theme, toggleTheme } = useTheme()
+function TaskPage() {
+  const { taskId } = useParams<{ taskId: string }>()
+  const navigate = useNavigate()
+  const [status, setStatus] = useState<TaskStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [stage, setStage] = useState<'processing' | 'result'>('processing')
 
   useEffect(() => {
-    const savedTaskId = loadActiveTaskId()
-    if (!savedTaskId) {
-      setRestoringTask(false)
+    if (!taskId) {
+      navigate('/', { replace: true })
       return
     }
 
-    getTaskStatus(savedTaskId)
-      .then((status) => {
-        setTaskId(savedTaskId)
-        setCurrentState(status.stage === 'complete' ? 'result' : 'processing')
+    setLoading(true)
+    getTaskStatus(taskId)
+      .then((st) => {
+        setStatus(st)
+        if (st.stage === 'complete') {
+          setStage('result')
+          clearActiveTaskId()
+        } else {
+          setStage('processing')
+          saveActiveTaskId(taskId)
+        }
       })
       .catch(() => {
         clearActiveTaskId()
+        navigate('/', { replace: true })
       })
       .finally(() => {
-        setRestoringTask(false)
+        setLoading(false)
       })
-  }, [])
+  }, [taskId, navigate])
 
-  const switchState = useCallback((next: FlowState) => {
-    setTransitioning(true)
-    setTimeout(() => {
-      setCurrentState(next)
-      setTransitioning(false)
-    }, 800)
-  }, [])
+  if (loading) {
+    return (
+      <div className="flex-grow flex flex-col items-center justify-center py-24 text-muted-foreground gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+        <p className="text-sm">正在载入任务状态...</p>
+      </div>
+    )
+  }
+
+  if (!taskId || !status) {
+    return null
+  }
+
+  if (stage === 'result') {
+    return (
+      <ResultState
+        taskId={taskId}
+        onReset={() => {
+          clearActiveTaskId()
+          navigate('/')
+        }}
+      />
+    )
+  }
+
+  return (
+    <ProcessingState
+      taskId={taskId}
+      onComplete={() => {
+        clearActiveTaskId()
+        setStage('result')
+      }}
+      onNavigateToHistory={() => navigate('/history')}
+    />
+  )
+}
+
+function HomePage() {
+  const navigate = useNavigate()
 
   const handleUploadComplete = useCallback((id: string) => {
     saveActiveTaskId(id)
-    setTaskId(id)
-    switchState('processing')
-  }, [switchState])
+    navigate(`/task/${id}`)
+  }, [navigate])
 
-  const handleProcessingComplete = useCallback(() => {
-    switchState('result')
-  }, [switchState])
+  return <UploadState onUploadComplete={handleUploadComplete} />
+}
 
-  const handleReset = useCallback(() => {
-    clearActiveTaskId()
-    setTaskId(null)
-    switchState('upload')
-  }, [switchState])
+export default function App() {
+  const navigate = useNavigate()
+  const { theme, toggleTheme } = useTheme()
+  const [activeProcessingTaskId, setActiveProcessingTaskId] = useState<string | null>(null)
+  const [runtimeHealth, setRuntimeHealth] = useState<RuntimeHealth | null>(null)
 
-  const handleOpenHistoryTask = useCallback((id: string, stage: string) => {
-    saveActiveTaskId(id)
-    setTaskId(id)
-    setCurrentState(stage === 'complete' ? 'result' : 'processing')
-    setPage('home')
+  useEffect(() => {
+    getRuntimeHealth()
+      .then(setRuntimeHealth)
+      .catch(() => setRuntimeHealth(null))
   }, [])
 
-  const handleHistoryTaskDeleted = useCallback((id: string) => {
-    if (id !== taskId) return
-    clearActiveTaskId()
-    setTaskId(null)
-    setCurrentState('upload')
-  }, [taskId])
+  // 持续同步后台处理中任务的状态，供导航栏状态徽章展示
+  useEffect(() => {
+    const checkActiveTaskStatus = async () => {
+      const savedId = loadActiveTaskId()
+      if (!savedId) {
+        setActiveProcessingTaskId(null)
+        return
+      }
 
-  const handleNavigate = useCallback((p: Page) => {
-    setPage(p)
-    if (p === 'home' && currentState === 'result' && !taskId) {
-      setCurrentState('upload')
+      try {
+        const st = await getTaskStatus(savedId)
+        if (st.stage === 'complete' || st.stage === 'error') {
+          clearActiveTaskId()
+          setActiveProcessingTaskId(null)
+        } else {
+          setActiveProcessingTaskId(savedId)
+        }
+      } catch {
+        clearActiveTaskId()
+        setActiveProcessingTaskId(null)
+      }
     }
-  }, [currentState, taskId])
+
+    void checkActiveTaskStatus()
+    const timer = setInterval(checkActiveTaskStatus, 2500)
+    return () => clearInterval(timer)
+  }, [])
+
+  const handleOpenTask = useCallback((id: string) => {
+    saveActiveTaskId(id)
+    getTaskStatus(id)
+      .then((st) => {
+        if (st.stage !== 'complete' && st.stage !== 'error') {
+          setActiveProcessingTaskId(id)
+        } else {
+          clearActiveTaskId()
+          setActiveProcessingTaskId(null)
+        }
+      })
+      .catch(() => {
+        clearActiveTaskId()
+        setActiveProcessingTaskId(null)
+      })
+    navigate(`/task/${id}`)
+  }, [navigate])
+
+  const handleHistoryTaskDeleted = useCallback((id: string) => {
+    const active = loadActiveTaskId()
+    if (id === active) {
+      clearActiveTaskId()
+      setActiveProcessingTaskId(null)
+      navigate('/')
+    }
+  }, [navigate])
 
   return (
     <div className="relative flex flex-col bg-background w-full min-h-screen">
       <Navbar
         theme={theme}
         onToggleTheme={toggleTheme}
-        activePage={page}
-        onNavigate={handleNavigate}
-        onOpenCompletedTask={(id) => handleOpenHistoryTask(id, 'complete')}
+        onOpenCompletedTask={handleOpenTask}
+        activeProcessingTaskId={activeProcessingTaskId}
+        onOpenProcessingTask={() => {
+          if (activeProcessingTaskId) handleOpenTask(activeProcessingTaskId)
+        }}
       />
 
-      <main className="flex-grow flex flex-col relative">
+      {runtimeHealth && !runtimeHealth.ffmpeg.available && (
+        <div className="relative z-40 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-amber-300/70 bg-amber-50 px-4 py-2 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/70 dark:text-amber-100">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>
+            未检测到 FFmpeg，视频转译暂不可用。{runtimeHealth.ffmpeg.install_hint}
+          </span>
+          <a
+            href={runtimeHealth.ffmpeg.download_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 font-semibold underline underline-offset-2"
+          >
+            下载 FFmpeg
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        </div>
+      )}
+
+      <main className="flex-grow flex flex-col relative animate-fade-in-up">
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           {/* 极简企业级柔和背景光晕 */}
           <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-slate-300/10 dark:bg-slate-800/15 blur-[160px] rounded-full" />
           <div className="absolute bottom-[-15%] right-[-10%] w-[45%] h-[45%] bg-slate-400/10 dark:bg-slate-700/10 blur-[150px] rounded-full" />
         </div>
 
-        {page === 'home' && restoringTask && (
-          <div className="flex-grow flex items-center justify-center text-muted-foreground">
-            正在恢复上次任务...
-          </div>
-        )}
-
-        {page === 'home' && !restoringTask && (
-          <div
-            className={`flex-grow flex flex-col transition-all duration-800 ease-in-out ${
-              transitioning ? 'opacity-0 -translate-y-5' : 'opacity-100 translate-y-0'
-            }`}
-          >
-            {currentState === 'upload' && (
-              <UploadState onUploadComplete={handleUploadComplete} />
-            )}
-            {currentState === 'processing' && taskId && (
-              <ProcessingState taskId={taskId} onComplete={handleProcessingComplete} />
-            )}
-            {currentState === 'result' && taskId && (
-              <ResultState taskId={taskId} onReset={handleReset} />
-            )}
-          </div>
-        )}
-
-        {page === 'history' && (
-          <HistoryView
-            onOpenTask={handleOpenHistoryTask}
-            onTaskDeleted={handleHistoryTaskDeleted}
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/batch" element={<BatchState />} />
+          <Route path="/task/:taskId" element={<TaskPage />} />
+          <Route
+            path="/history"
+            element={
+              <HistoryView
+                onOpenTask={handleOpenTask}
+                onTaskDeleted={handleHistoryTaskDeleted}
+              />
+            }
           />
-        )}
-        {page === 'voices' && <VoiceLibrary />}
-        {page === 'performance' && <PerformancePage />}
+          <Route path="/voices" element={<VoiceLibrary />} />
+          <Route path="/performance" element={<PerformancePage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </main>
+
+      <footer className="w-full border-t border-border/40 py-3 px-6 text-xs text-muted-foreground glass-panel">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+            <span>视译宝 - 本地视频转译与智能字幕配音系统</span>
+            <ChangelogModal />
+          </div>
+          <a
+            href="https://github.com/deijing/shiyibao"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors font-medium cursor-pointer"
+          >
+            <GithubIcon className="w-4 h-4" />
+            <span>GitHub 开源仓库 (deijing/shiyibao)</span>
+            <ExternalLink className="w-3 h-3 opacity-60" />
+          </a>
+        </div>
+      </footer>
     </div>
   )
 }

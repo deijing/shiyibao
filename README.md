@@ -1,6 +1,9 @@
 # 视译宝（ShiYiBao）
 
-视译宝是一套本地运行的视频转译 Web 应用：上传视频后，依次执行音频提取、语音识别、Gemini 字幕翻译、MiMo 语音合成、音轨混合与字幕烧录，最终导出 H.264/AAC MP4。
+[![GitHub Repository](https://img.shields.io/badge/GitHub-deijing%2Fshiyibao-blue?logo=github)](https://github.com/deijing/shiyibao)
+> 开源仓库地址：[https://github.com/deijing/shiyibao](https://github.com/deijing/shiyibao)
+
+视译宝是一套本地运行的视频转译应用，可作为 Tauri v2 原生桌面应用分发，也保留 React + FastAPI 的浏览器开发模式。上传视频后，应用依次执行音频提取、语音识别、Gemini 字幕翻译、MiMo 语音合成、音轨混合与字幕烧录，最终导出 H.264/AAC MP4。
 
 ## 功能
 
@@ -19,6 +22,7 @@
 - Python 3.10–3.14（CI 使用 3.12）
 - Node.js 20.19+ 或 22.12+（CI 使用 22）
 - npm 10+
+- Rust 1.77.2+（仅桌面开发/打包需要）
 - FFmpeg 6+，必须包含 `libass`、`libx264` 和 AAC 支持
 - Chrome、Edge、Firefox 或 Safari 的近期版本
 
@@ -109,7 +113,7 @@ GEMINI_API_KEY=你的_Gemini_Key
 MIMO_API_KEY=你的_MiMo_Key
 ```
 
-也可以启动后在“设置”中填写密钥。`.env`、浏览器本地存储和 `workspace/user_settings.json` 都可能保存密钥；不要分享这些文件，也不要将它们提交到 Git。仓库不包含任何默认密钥。
+也可以启动后在“设置”中填写密钥。`.env`、浏览器本地存储和用户数据目录中的 `workspace/user_settings.json` 都可能保存密钥；不要分享这些文件，也不要将它们提交到 Git。仓库不包含任何默认密钥。
 
 ## 启动
 
@@ -132,6 +136,57 @@ python start.py
 
 按 `Ctrl+C` 会同时关闭前后端。
 
+## 桌面开发与打包
+
+桌面外壳位于 `src-tauri/`，FastAPI 通过 PyInstaller 打成单文件边车。首次准备：
+
+```bash
+npm ci
+cd app && npm ci && cd ..
+python -m pip install -r requirements-build.txt
+```
+
+桌面端 ICNS、ICO 与各尺寸 PNG 图标均由 `app/public/logo.png` 生成。
+
+启动桌面开发模式：
+
+```bash
+npm run desktop:dev
+```
+
+构建当前平台的安装包：
+
+```bash
+npm run desktop:build
+```
+
+构建脚本会读取 `rustc --print host-tuple`，生成符合 Tauri 命名规则的
+`src-tauri/binaries/shiyibao-backend-<target-triple>[.exe]`。macOS 产物位于
+`src-tauri/target/release/bundle/dmg/`，Windows 在对应系统上生成 NSIS 安装程序 EXE。
+
+默认安装包不内置 FFmpeg。应用启动后会检测 `ffmpeg` 与 `ffprobe`；除当前
+`PATH` 外，还会自动检查 macOS 的 Homebrew/MacPorts 常见目录
+（`/opt/homebrew/bin`、`/usr/local/bin`、`/opt/local/bin`）以及 Windows 的
+WinGet、Chocolatey、Scoop 和常见 Program Files 安装目录。缺失时会在界面中显示
+安装说明与下载入口。若要用自包含的 FFmpeg 构建增大约 50MB 的开箱即用版本，可运行：
+
+```bash
+npm run sidecar:build:ffmpeg
+npm run tauri -- build
+```
+
+内置模式应使用可再分发的静态 FFmpeg/ffprobe 构建，并确保其许可证适合你的分发方式。
+
+macOS 与 Windows 不能用这套链路直接交叉生成安装包。`.github/workflows/desktop.yml`
+提供原生 runner 矩阵，可在 GitHub Actions 中手动运行，或推送 `desktop-v*` 标签，
+分别产出 DMG 和 EXE 工作流制品。
+
+桌面出包工作流会在上传产物前执行两层运行验证：先直接启动 PyInstaller
+边车完成上传、目录扫描、Range 播放与 FFmpeg 缩略图等接口测试；再启动打包后的
+Tauri 主程序并等待其动态端口 `/api/health` 就绪。Windows 任务会先静默安装
+NSIS EXE，再从安装目录启动应用，因此工作流成功不仅代表编译通过，也代表
+安装后的主程序能够创建窗口、拉起边车并定位 FFmpeg。
+
 ## 使用流程
 
 1. 在设置中填写并测试 Gemini 与 MiMo 密钥。
@@ -140,7 +195,20 @@ python start.py
 4. 在结果页预览字幕、原音轨和配音轨。
 5. 下载字幕 JSON 或转译后的 MP4。
 
-任务文件保存在 `workspace/`，删除历史任务时会同时删除对应上传文件和生成物。服务重启后，未完成的任务会被标记为中断，需要手动重试。
+桌面端批量模式使用 Tauri 原生目录选择器，输入目录会返回绝对路径并立即扫描，
+输出目录会以绝对路径传给边车完成自动归档。浏览器开发模式因浏览器安全限制，
+文件夹选择会回退为逐文件上传；需要原地扫描或自动归档时可直接粘贴绝对路径。
+
+任务文件保存在系统用户数据目录，删除历史任务时会同时删除对应上传文件和生成物。服务重启后，未完成的任务会被标记为中断，需要手动重试。
+
+- macOS 桌面包：`~/Library/Application Support/com.shiyibao.desktop/workspace/`
+- Windows 桌面包：`%APPDATA%\com.shiyibao.desktop\workspace\`
+- Linux 桌面包：`$XDG_DATA_HOME/com.shiyibao.desktop/workspace/`
+
+直接运行 Python 后端时仍使用平台默认的“视译宝/shiyibao”目录。Tauri 桌面包会把
+自己的应用数据目录通过 `SHIYIBAO_DATA_DIR` 注入边车，避免写入只读安装目录。
+
+可用 `SHIYIBAO_DATA_DIR` 覆盖根数据目录。
 
 ## 配置项
 
@@ -153,20 +221,30 @@ python start.py
 | `TRANSLATE_BATCH_SIZE` | `20` | 5–50 |
 | `TTS_CONCURRENCY` | `6` | 1–16 |
 | `SUBTITLE_FONT` | `Arial` | ASS 字幕字体；不存在时由 libass 回退 |
+| `SHIYIBAO_PORT` | `8000` | 后端监听端口；桌面端由 Tauri 动态注入 |
+| `SHIYIBAO_DATA_DIR` | 系统用户数据目录 | 上传、任务、预览与本地设置的根目录 |
+| `SHIYIBAO_FFMPEG_DIR` | 空 | 可选的内置/自定义 FFmpeg 与 ffprobe 目录 |
 
-低内存电脑建议从 `.env.example` 的保守并发值开始。运行时也可以在“性能”页面调整，并会保存到 `workspace/performance.json`。
+低内存电脑建议从 `.env.example` 的保守并发值开始。运行时也可以在“性能”页面调整，并会保存到用户数据目录下的 `workspace/performance.json`。
+
+构建边车后可用最小 GUI `PATH` 执行真实接口验收：
+
+```bash
+python scripts/test_packaged_sidecar.py \
+  --sidecar src-tauri/binaries/shiyibao-backend-$(rustc --print host-tuple)
+```
 
 ## 架构
 
 ```text
-浏览器（React + Vite）
-        │ /api
-        ▼
-FastAPI ── 任务元数据与生成物（workspace/）
-  ├─ FFmpeg：提取音频、对齐、混流、字幕烧录
-  ├─ BcutASR：语音识别
-  ├─ Gemini：字幕翻译
-  └─ MiMo：语音合成
+Tauri v2 原生外壳
+  ├─ React + Vite（运行时注入动态 API base）
+  └─ PyInstaller FastAPI 边车（127.0.0.1:动态端口）
+        ├─ 用户数据目录：任务元数据与生成物
+        ├─ FFmpeg：提取音频、对齐、混流、字幕烧录
+        ├─ BcutASR：语音识别
+        ├─ Gemini：字幕翻译
+        └─ MiMo：语音合成
 ```
 
 主要目录：
@@ -174,8 +252,10 @@ FastAPI ── 任务元数据与生成物（workspace/）
 - `app/src/`：React 前端
 - `server/routers/`：HTTP API 与任务调度
 - `server/services/`：ASR、翻译、TTS、音视频处理
+- `src-tauri/`：Tauri v2 外壳、边车生命周期和桌面打包配置
+- `scripts/build_sidecar.py`：PyInstaller 边车构建入口
 - `tests/`：后端单元测试
-- `workspace/`：本地运行数据，不纳入版本控制
+- 系统用户数据目录：本地运行数据
 
 ## 开发与验证
 
@@ -233,14 +313,14 @@ npm run build
 ## 安全说明
 
 - 服务默认只监听 `127.0.0.1`，不要在不可信网络中改为 `0.0.0.0`。
-- 上传的视频、字幕、音频、日志和设置均保存在本机 `workspace/`。
+- 上传的视频、字幕、音频、日志和设置均保存在本机用户数据目录。
 - 音频和文本会发送至第三方 ASR、Gemini 与 MiMo 服务；使用前请确认素材授权与相应服务条款。
 - 本项目没有用户认证，不适合直接暴露到公网。
 
 ## 已知限制
 
 - BcutASR 为第三方封装的云端识别服务，上游接口变化可能导致识别不可用。
-- 当前以本地开发服务器方式运行，不包含公网部署、用户鉴权或对象存储。
+- 桌面安装包尚未配置 Apple/Windows 代码签名；公开分发前需补齐签名与公证。
 - 超长视频会消耗大量磁盘空间、网络流量和编码时间。
 - 处理结果质量取决于原视频音质、翻译模型、TTS 服务和字体环境。
 

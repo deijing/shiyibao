@@ -1,13 +1,19 @@
 import json
+import hmac
 import logging
+import os
+import platform
+import time
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .config import TASKS_DIR, UPLOADS_DIR, WORKSPACE_DIR
-from .routers import performance, settings, task, upload, voice
+from .config import APP_DATA_DIR, TASKS_DIR, UPLOADS_DIR, WORKSPACE_DIR
+from .routers import env, performance, settings, task, upload, voice
+from .services.audio import find_media_binary
 
 logger = logging.getLogger(__name__)
 
@@ -58,18 +64,80 @@ app.include_router(task.router, prefix="/api")
 app.include_router(voice.router, prefix="/api")
 app.include_router(performance.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
+app.include_router(env.router, prefix="/api")
 
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    ffmpeg_path = find_media_binary("ffmpeg")
+    ffprobe_path = find_media_binary("ffprobe")
+    system = platform.system()
+    if system == "Darwin":
+        install_hint = "可运行 “brew install ffmpeg”，安装后重新启动应用。"
+    elif system == "Windows":
+        install_hint = "可运行 “winget install Gyan.FFmpeg”，安装后重新启动应用。"
+    else:
+        install_hint = "请通过系统包管理器安装 ffmpeg 与 ffprobe，然后重新启动应用。"
+    return {
+        "status": "ok",
+        "data_dir": str(APP_DATA_DIR),
+        "ffmpeg": {
+            "available": bool(ffmpeg_path and ffprobe_path),
+            "ffmpeg_path": ffmpeg_path,
+            "ffprobe_path": ffprobe_path,
+            "download_url": "https://ffmpeg.org/download.html",
+            "install_hint": install_hint,
+        },
+    }
 
 
-# Serve generated artifacts (audio/video) directly from the tasks workspace.
+def _shutdown_token_matches(provided_token: Optional[str]) -> bool:
+    expected_token = os.getenv("SHIYIBAO_SHUTDOWN_TOKEN", "")
+    return bool(
+        expected_token
+        and provided_token
+        and hmac.compare_digest(provided_token, expected_token)
+    )
+
+
+def _exit_process() -> None:
+    # 在终止 PyInstaller 子进程前让 HTTP 响应到达 Tauri。此处有意使用 os._exit：
+    # 它同样适用于 Windows 上 onefile 引导程序创建的子进程。
+    time.sleep(0.1)
+    os._exit(0)
+
+
+@app.post("/api/shutdown", include_in_schema=False)
+async def shutdown(
+    background_tasks: BackgroundTasks,
+    shutdown_token: Optional[str] = Header(
+        default=None,
+        alias="X-Shiyibao-Shutdown-Token",
+    ),
+) -> dict:
+    if not _shutdown_token_matches(shutdown_token):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    background_tasks.add_task(_exit_process)
+    return {"status": "shutting_down"}
+
+
+# 直接从任务工作区提供生成的产物（音频/视频）。
 app.mount("/files", StaticFiles(directory=str(TASKS_DIR)), name="files")
 
 
-if __name__ == "__main__":
+def _server_port() -> int:
+    try:
+        port = int(os.getenv("SHIYIBAO_PORT", "8000"))
+    except ValueError:
+        return 8000
+    return port if 1 <= port <= 65535 else 8000
+
+
+def run_server() -> None:
     import uvicorn
 
-    uvicorn.run("server.main:app", host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=_server_port(), log_level="info")
+
+
+if __name__ == "__main__":
+    run_server()

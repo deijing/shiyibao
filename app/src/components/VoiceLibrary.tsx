@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+
 import {
   Mic,
   Play,
@@ -12,10 +13,11 @@ import {
   CheckCircle2
 } from 'lucide-react'
 import { getVoicePreviewUrl } from '@/lib/api'
-import { loadSettings, type AppSettings } from './SettingsPanel'
+import { loadSettings, saveSettings, type AppSettings } from './SettingsPanel'
 import { Button } from '@/components/ui/button'
 
 interface VoiceInfo {
+
   id: string
   name: string
   gender: 'female' | 'male'
@@ -123,6 +125,18 @@ export default function VoiceLibrary({ onSelectVoice }: VoiceLibraryProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const blobUrlRef = useRef<string | null>(null)
 
+  useEffect(() => {
+    function syncSettings() {
+      setSelected(loadSettings().mimoVoice)
+    }
+    window.addEventListener('settings-updated', syncSettings)
+    window.addEventListener('storage', syncSettings)
+    return () => {
+      window.removeEventListener('settings-updated', syncSettings)
+      window.removeEventListener('storage', syncSettings)
+    }
+  }, [])
+
   const filteredVoices = useMemo(() => {
     return VOICES.filter(v => {
       const matchLang = langFilter === 'all' || v.lang === langFilter
@@ -191,12 +205,14 @@ export default function VoiceLibrary({ onSelectVoice }: VoiceLibraryProps) {
 
   const handleSelect = useCallback((voiceId: string) => {
     setSelected(voiceId)
-    const settings: AppSettings = { ...loadSettings(), mimoVoice: voiceId }
-    localStorage.setItem('shiyibao-settings', JSON.stringify(settings))
+    const updatedSettings: AppSettings = { ...loadSettings(), mimoVoice: voiceId }
+    saveSettings(updatedSettings)
     onSelectVoice?.(voiceId)
   }, [onSelectVoice])
 
-  // Icon helper based on index for monochromatic visual variety
+
+
+  // 按索引选择图标，丰富单色视觉层次
   const getVoiceIcon = (index: number) => {
     const icons = [AudioLines, Volume2, Waves, Radio]
     const IconComponent = icons[index % icons.length]
@@ -204,8 +220,8 @@ export default function VoiceLibrary({ onSelectVoice }: VoiceLibraryProps) {
   }
 
   return (
-    <div className="flex-grow flex flex-col px-8 sm:px-12 md:px-20 lg:px-28 xl:px-36 2xl:px-44 py-8 w-full relative z-10 text-slate-900 dark:text-slate-100 font-sans">
-      {/* 头部区域 - 极简商务 SaaS 风格 */}
+    <div className="flex-grow flex flex-col px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto py-6 sm:py-8 w-full relative z-10 text-slate-900 dark:text-slate-100 font-sans">
+      {/* 头部区域：极简商务 SaaS 风格 */}
       <div className="mb-8 flex flex-col items-center text-center max-w-2xl mx-auto">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 text-xs font-semibold tracking-wide border border-slate-200/80 dark:border-slate-700/80 mb-4 shadow-2xs">
           <Mic className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
@@ -353,7 +369,7 @@ export default function VoiceLibrary({ onSelectVoice }: VoiceLibraryProps) {
                   ))}
                 </div>
 
-                {/* 操作栏 - 水平 Space-between 对齐 */}
+                {/* 操作栏：水平两端对齐 */}
                 <div className="flex items-center justify-between gap-3">
                   <Button
                     variant="ghost"

@@ -124,7 +124,7 @@ async def get_gemini_models(req: KeyTestRequest):
                             "name": display_name,
                             "description": desc,
                         })
-                # Sort models so newer models appear nicely
+                # 按模型 ID 倒序排列，优先展示较新模型
                 valid_models.sort(key=lambda x: x["id"], reverse=True)
                 return {"models": valid_models}
             else:

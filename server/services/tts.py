@@ -1,6 +1,7 @@
 import asyncio
 import base64
 from collections.abc import Callable
+import hashlib
 import logging
 import re
 import wave
@@ -32,11 +33,11 @@ def _get_wav_duration(path: Path) -> float:
         with wave.open(str(path), 'rb') as w:
             return w.getnframes() / float(w.getframerate())
     except Exception:
-        return 2.0  # fallback
+        return 2.0  # 兜底值
 
 
 def _atempo_filters(tempo: float) -> list[str]:
-    """Split high speed-up ratios into quality-safe atempo stages."""
+    """将高倍加速比拆分为保证音质的 atempo 阶段。"""
     filters: list[str] = []
     remaining = max(1.0, tempo)
     while remaining > MAX_ATEMPO_FACTOR:
@@ -57,7 +58,7 @@ def _ends_utterance(text: str) -> bool:
 
 
 def _build_tts_utterances(segments: list[dict]) -> list[dict]:
-    """Join adjacent ASR fragments so TTS receives natural spoken thoughts."""
+    """合并相邻 ASR 片段，使 TTS 接收到自然连贯的语句。"""
     utterances: list[dict] = []
     current: dict | None = None
 
@@ -108,11 +109,16 @@ def _build_tts_utterances(segments: list[dict]) -> list[dict]:
     return utterances
 
 
-async def _assemble_track(rendered: list[tuple[float, float, Path]], out_path: Path) -> None:
-    """Lay each synthesized clip onto a single track at its original start time."""
+async def _assemble_track(
+    rendered: list[tuple[float, float, Path]],
+    out_path: Path,
+    track_duration: float | None = None,
+) -> None:
+    """将每段合成音频按原始开始时间铺设到单一音轨上。"""
+    silence_seconds = max(0.1, float(track_duration)) if track_duration else 1.0
     if not rendered:
         await run_ffmpeg([
-            "-f", "lavfi", "-t", "1",
+            "-f", "lavfi", "-t", f"{silence_seconds:.3f}",
             "-i", f"anullsrc=channel_layout=mono:sample_rate={WORK_RATE}",
             "-acodec", "pcm_s16le", str(out_path), "-y",
         ])
@@ -127,8 +133,7 @@ async def _assemble_track(rendered: list[tuple[float, float, Path]], out_path: P
     for i, (start, end, wav_path) in enumerate(rendered):
         duration = _get_wav_duration(wav_path)
 
-        # Each dub belongs to its own subtitle interval. A later subtitle's
-        # start must not silently extend the current clip's speaking window.
+        # 每段配音属于各自的字幕区间。后续字幕的开始时间不得悄然延长当前片段的发声窗口。
         available = max(MIN_SEGMENT_SECONDS, end - start)
         tempo = duration / available if duration > available else 1.0
 
@@ -142,16 +147,33 @@ async def _assemble_track(rendered: list[tuple[float, float, Path]], out_path: P
         ])
         filters.append(f"[{i}:a]{','.join(clip_filters)}[a{i}]")
         labels.append(f"[a{i}]")
-    mix = "".join(labels) + f"amix=inputs={len(rendered)}:normalize=0:dropout_transition=0[out]"
-    filter_complex = ";".join(filters + [mix])
+    mix = "".join(labels) + f"amix=inputs={len(rendered)}:normalize=0:dropout_transition=0[mixed]"
+    if track_duration and track_duration > 0:
+        # 将整轨补齐到时间窗长度，供流式分片混音使用。
+        mix_filters = [
+            mix,
+            f"[mixed]apad=whole_dur={float(track_duration):.3f},"
+            f"atrim=0:{float(track_duration):.3f},asetpts=PTS-STARTPTS[out]",
+        ]
+        map_label = "[out]"
+    else:
+        mix_filters = [mix.replace("[mixed]", "[out]")]
+        map_label = "[out]"
+    filter_complex = ";".join(filters + mix_filters)
 
     args += [
         "-filter_complex", filter_complex,
-        "-map", "[out]",
+        "-map", map_label,
         "-acodec", "pcm_s16le",
         str(out_path), "-y",
     ]
     await run_ffmpeg(args)
+
+
+def _tts_cache_path(seg_dir: Path, seg_idx: int, voice: str, text: str) -> Path:
+    """按 音色+文案 内容寻址，避免重跑任务复用过期缓存。"""
+    digest = hashlib.sha256(f"{voice}\0{text}".encode("utf-8")).hexdigest()[:16]
+    return seg_dir / f"{int(seg_idx):03d}_{digest}.wav"
 
 
 async def synthesize_all(
@@ -160,8 +182,10 @@ async def synthesize_all(
     voice: str,
     api_key: str,
     log_cb: Callable[..., None] | None = None,
+    out_filename: str = "dubbed_audio.wav",
+    track_duration: float | None = None,
 ) -> Path:
-    """Synthesize natural translated utterances, then assemble the dub track."""
+    """合成自然的翻译语句，再组装配音音轨。"""
     seg_dir = task_dir / "tts_segments"
     seg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -187,7 +211,11 @@ async def synthesize_all(
                 ],
                 "audio": {"format": "wav", "voice": voice},
             }
-            wav_path = seg_dir / f"{idx_0:03d}.wav"
+            seg_idx = seg.get("index", idx_0)
+            wav_path = _tts_cache_path(seg_dir, int(seg_idx), voice, text)
+            if wav_path.exists() and wav_path.stat().st_size > 100:
+                return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
+
             async with tts_limiter.slot():
                 for attempt in range(MAX_RETRIES):
                     try:
@@ -232,6 +260,6 @@ async def synthesize_all(
     if log_cb:
         log_cb("音色合成", f"全套 {len(rendered)} 条配音音频下载完成，开始 FFmpeg 多轨音频拼接与时间轴对齐...", "info")
 
-    out_path = task_dir / "dubbed_audio.wav"
-    await _assemble_track(rendered, out_path)
+    out_path = task_dir / out_filename
+    await _assemble_track(rendered, out_path, track_duration=track_duration)
     return out_path

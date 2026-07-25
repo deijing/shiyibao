@@ -27,7 +27,7 @@ LANG_NAMES = {
 
 
 def _extract_json_array(text: str) -> list:
-    """Parse a JSON array out of a model response, tolerating code fences."""
+    """从模型响应中解析 JSON 数组，并兼容代码围栏。"""
     s = text.strip()
     if s.startswith("```"):
         s = s[3:]
@@ -52,8 +52,14 @@ async def translate_subtitles(
     gemini_model: str = "gemini-2.0-flash",
     source_lang: str = "auto",
     log_cb: Callable[..., None] | None = None,
+    skip_translated: bool = False,
 ) -> list[dict]:
-    """Translate every segment's source_text into target_lang via the Gemini API."""
+    """通过 Gemini API 将每个分段的 source_text 翻译为 target_lang。
+
+    当 ``skip_translated`` 为 True 时，已包含 ``translated_text`` 的分段
+    （例如由快速预览通道生成）会保持不变且不发送 API 请求，从而避免重复工作与成本。
+    仍会持久化并返回完整的 ``segments`` 列表。
+    """
     target_lang_name = LANG_NAMES.get(target_lang, "Chinese")
     source_lang_name = LANG_NAMES.get(source_lang, None) if source_lang and source_lang != "auto" else None
 
@@ -80,9 +86,13 @@ async def translate_subtitles(
 
     performance = get_performance_settings()
     batch_size = performance.translate_batch_size
+    pending = [
+        seg for seg in segments
+        if not (skip_translated and str(seg.get("translated_text", "")).strip())
+    ]
     batches = [
-        (batch_start, segments[batch_start:batch_start + batch_size])
-        for batch_start in range(0, len(segments), batch_size)
+        (batch_start, pending[batch_start:batch_start + batch_size])
+        for batch_start in range(0, len(pending), batch_size)
     ]
     async with httpx.AsyncClient(
         timeout=120.0,
@@ -143,7 +153,7 @@ async def translate_subtitles(
                     seg["translated_text"] = seg["source_text"]
 
                 if log_cb:
-                    log_cb("AI 翻译", f"句 [{idx}/{len(segments)}] 翻译完成: \"{seg['source_text']}\" ➔ \"{seg['translated_text']}\"", "api")
+                    log_cb("AI 翻译", f"句 [{idx}/{len(pending)}] 翻译完成: \"{seg['source_text']}\" ➔ \"{seg['translated_text']}\"", "api")
 
     out_path = task_dir / f"subtitles_{target_lang}.json"
     out_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")

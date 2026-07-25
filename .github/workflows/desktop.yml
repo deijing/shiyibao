@@ -1,0 +1,162 @@
+name: Desktop bundles
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS ARM64 (Apple Silicon)
+            os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - name: macOS x86_64 (Intel)
+            os: macos-13
+            target: x86_64-apple-darwin
+            bundles: dmg
+          - name: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+
+      - name: Install backend build dependencies
+        run: python -m pip install -r requirements-build.txt -r requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            app/package-lock.json
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: app
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
+
+      - name: Run backend tests
+        run: python -m pytest -q
+
+      - name: Verify frontend
+        run: |
+          npm run lint
+          npm run build
+        working-directory: app
+
+      - name: Build Python sidecar
+        run: python scripts/build_sidecar.py --target-triple ${{ matrix.target }}
+
+      - name: Verify packaged Python sidecar
+        shell: bash
+        run: |
+          suffix=""
+          if [[ "$RUNNER_OS" == "Windows" ]]; then suffix=".exe"; fi
+          python scripts/test_packaged_sidecar.py \
+            --sidecar "src-tauri/binaries/shiyibao-backend-${{ matrix.target }}${suffix}"
+
+      - name: Check Rust desktop shell
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --target ${{ matrix.target }}
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles ${{ matrix.bundles }} --target ${{ matrix.target }}
+          tagName: ${{ github.ref_name }}
+          releaseName: "视译宝 ${{ github.ref_name }}"
+          releaseBody: |
+            ## 下载说明
+
+            | 文件 | 适用平台 |
+            |------|---------|
+            | `*.dmg` (aarch64) | macOS Apple Silicon (M1/M2/M3/M4) |
+            | `*.dmg` (x64) | macOS Intel |
+            | `*.exe` | Windows 64 位 |
+          releaseDraft: false
+          prerelease: false
+
+      - name: Verify packaged macOS app
+        if: runner.os == 'macOS'
+        run: >-
+          python scripts/test_packaged_desktop.py
+          --app "src-tauri/target/${{ matrix.target }}/release/bundle/macos/视译宝.app/Contents/MacOS/视译宝"
+
+      - name: Install and verify Windows NSIS app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem `
+            -Path "src-tauri/target/${{ matrix.target }}/release/bundle/nsis" `
+            -Filter "*.exe" |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw "NSIS installer was not generated"
+          }
+
+          $installDir = Join-Path $env:RUNNER_TEMP "shiyibao-nsis-smoke"
+          $install = Start-Process `
+            -FilePath $installer.FullName `
+            -ArgumentList "/S", "/D=$installDir" `
+            -Wait `
+            -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "NSIS installer exited with $($install.ExitCode)"
+          }
+
+          $app = Join-Path $installDir "shiyibao.exe"
+          if (-not (Test-Path $app)) {
+            throw "Installed app not found: $app"
+          }
+          python scripts/test_packaged_desktop.py --app $app
+          $residualProcesses = Get-CimInstance Win32_Process |
+            Where-Object {
+              $_.ExecutablePath -and
+              $_.ExecutablePath.StartsWith(
+                $installDir,
+                [System.StringComparison]::OrdinalIgnoreCase
+              )
+            }
+          if ($residualProcesses) {
+            $details = $residualProcesses |
+              ForEach-Object { "$($_.ProcessId):$($_.ExecutablePath)" }
+            throw "Desktop app left residual processes: $($details -join ', ')"
+          }

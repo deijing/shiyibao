@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"视译宝主窗口的默认桌面权限","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open"]}}

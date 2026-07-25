@@ -92,7 +92,7 @@ def test_tts_segments_run_with_bounded_concurrency_and_keep_order(monkeypatch, t
                 "choices": [{"message": {"audio": {"data": base64.b64encode(b"wav").decode()}}}]
             })
 
-    async def fake_assemble(rendered, _out_path) -> None:
+    async def fake_assemble(rendered, _out_path, **_kwargs) -> None:
         assembled.extend(rendered)
 
     monkeypatch.setattr(tts.httpx, "AsyncClient", FakeClient)

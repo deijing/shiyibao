@@ -61,7 +61,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
   const [subtitles, setSubtitles] = useState<SubtitleSegment[]>([])
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
-  const [duration, setDuration] = useState(15) // default fallback 15s
+  const [duration, setDuration] = useState(15) // 默认回退为 15 秒
   const [volume, setVolume] = useState(1)
   const [isMuted, setIsMuted] = useState(false)
   const [showSubtitles, setShowSubtitles] = useState(true)
@@ -83,7 +83,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
   const videoUrl = getVideoUrl(taskId)
   const exportUrl = getExportUrl(taskId)
 
-  // Fetch task status & subtitles
+  // 获取任务状态与字幕
   useEffect(() => {
     getTaskStatus(taskId).then(setTaskStatus).catch(() => {})
     getSubtitles(taskId)
@@ -97,7 +97,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
       .catch(() => {})
   }, [taskId])
 
-  // Extract video thumbnails for timeline
+  // 提取时间轴视频缩略图
   useEffect(() => {
     if (!videoUrl) return
     const extract = async () => {
@@ -138,7 +138,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
     extract()
   }, [videoUrl])
 
-  // Sync video time smoothly using requestAnimationFrame
+  // 通过 requestAnimationFrame 平滑同步视频时间
   useEffect(() => {
     let animationFrameId: number
     const updateTime = () => {
@@ -151,7 +151,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
     return () => cancelAnimationFrame(animationFrameId)
   }, [])
 
-  // Ctrl+Wheel for zoom
+  // Ctrl+滚轮缩放
   useEffect(() => {
     const container = timelineScrollRef.current
     if (!container) return
@@ -161,7 +161,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
         const delta = e.deltaY * -0.01
         setZoomScale(prev => Math.min(20, Math.max(1, prev + delta)))
       } else {
-        // Native horizontal pan using regular mouse wheel
+        // 常规滚轮原生横向平移
         if (e.deltaY !== 0 && e.deltaX === 0) {
           e.preventDefault()
           container.scrollLeft += e.deltaY
@@ -172,7 +172,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
     return () => container.removeEventListener('wheel', handleWheel)
   }, [])
 
-  // Sync video duration and current time
+  // 同步视频时长与当前时间
   const handleLoadedMetadata = () => {
     if (videoRef.current && videoRef.current.duration > 0) {
       setDuration(videoRef.current.duration)
@@ -227,12 +227,15 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
     setTimeout(() => setCopiedId(false), 2000)
   }
 
-  // Handle drag/scrub on Timeline
+  const headerRef = useRef<HTMLDivElement>(null)
+
+  // 处理时间轴拖拽定位
   const updateTimelineSeek = (clientX: number, forceCommit: boolean = false) => {
     if (!timelineRef.current || duration <= 0) return
     const rect = timelineRef.current.getBoundingClientRect()
-    const clickX = clientX - rect.left - 176 // 176px is left label width
-    const trackWidth = rect.width - 176
+    const labelWidth = headerRef.current?.offsetWidth || 176
+    const clickX = clientX - rect.left - labelWidth
+    const trackWidth = rect.width - labelWidth
     if (clickX < 0) return
     const ratio = Math.max(0, Math.min(1, clickX / trackWidth))
     const seekTime = ratio * duration
@@ -276,21 +279,21 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
     }
   }
 
-  // Active subtitle text dynamically synced with current video time
+  // 根据当前视频时间动态同步字幕文本
   const activeSubtitle = showSubtitles
     ? subtitles.find((s) => currentTime >= s.start && currentTime <= s.end)?.translated_text ||
       (subtitles.length > 0 && currentTime === 0 ? subtitles[0].translated_text : null)
     : null
 
-  // Calculate playhead left percentage
+  // 计算播放头左侧百分比
   const playheadPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0
 
   return (
     <div className="flex-grow flex flex-col p-4 sm:p-6 max-w-7xl mx-auto w-full select-none">
-      {/* 单一一体化工作台面板 (Unified Studio Workbench Container) */}
+      {/* 单一一体化工作台面板 */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-xl dark:shadow-2xl overflow-hidden flex flex-col">
 
-        {/* 1. 顶部集成式 Header 工具栏 (Integrated Header Bar) */}
+        {/* 顶部集成式工具栏 */}
         <div className="bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-5 py-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 text-xs font-semibold">
@@ -364,7 +367,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
           </div>
         </div>
 
-        {/* 2. 中间：巨幕视频播放器视口 (Video Viewport) */}
+        {/* 中间：巨幕视频播放器视口 */}
         <div
           ref={videoContainerRef}
           className="relative group bg-[#0F172A] dark:bg-[#090D16] flex flex-col items-center justify-center min-h-[380px] lg:min-h-[440px] border-b border-slate-200/80 dark:border-slate-800"
@@ -386,7 +389,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
             playsInline
           />
 
-          {/* 悬浮字幕 Display */}
+          {/* 悬浮字幕显示区 */}
           {activeSubtitle && (
             <div className="absolute bottom-20 left-1/2 -translate-x-1/2 px-6 py-2 rounded-2xl bg-black/70 backdrop-blur-md border border-white/15 shadow-2xl text-center max-w-3xl pointer-events-none z-10">
               <p className="text-lg sm:text-2xl font-bold text-white tracking-wide drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
@@ -395,7 +398,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
             </div>
           )}
 
-          {/* 居中 Play Button Overlay */}
+          {/* 居中播放按钮浮层 */}
           {!isPlaying && (
             <button
               onClick={togglePlay}
@@ -405,7 +408,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
             </button>
           )}
 
-          {/* 悬浮控制条 (Glassmorphism Controls Bar) */}
+          {/* 玻璃质感悬浮控制条 */}
           <div className="absolute bottom-4 left-4 right-4 h-14 bg-slate-900/80 dark:bg-slate-900/80 backdrop-blur-xl rounded-2xl border border-white/15 flex items-center px-4 sm:px-6 gap-4 text-white/90 shadow-2xl z-20 transition-opacity duration-300 group-hover:opacity-100 opacity-95">
             <button onClick={togglePlay} className="hover:text-purple-400 transition-colors p-1 cursor-pointer">
               {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
@@ -469,9 +472,9 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
           </div>
         </div>
 
-        {/* 3. 底部：横向多轨时间轴 (Unified NLE Timeline) */}
+        {/* 底部：横向多轨时间轴 */}
         <div className="bg-[#F1F5F9] dark:bg-[#0B1121] p-4 sm:p-5 flex flex-col space-y-3 relative">
-          {/* 时间轴 Header */}
+          {/* 时间轴标题栏 */}
           <div className="flex items-center justify-between pb-2 px-2">
             <div className="flex items-center gap-2">
               <Film className="w-4 h-4 text-slate-500 dark:text-slate-400" />
@@ -480,7 +483,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
               </h3>
             </div>
             <div className="flex items-center gap-4">
-              {/* Zoom Controls */}
+              {/* 缩放控件 */}
               <div className="flex items-center gap-2.5 bg-white dark:bg-slate-800/60 px-2 py-1.5 rounded-md border border-slate-200 dark:border-slate-700/50 shadow-2xs">
                 <button onClick={() => setZoomScale(Math.max(1, zoomScale - 0.5))} className="p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer">
                   <ZoomOut className="w-3.5 h-3.5" />
@@ -513,12 +516,12 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
             </div>
           </div>
 
-          {/* Timeline Viewport with Horizontal Scroll */}
+          {/* 支持横向滚动的时间轴视口 */}
           <div
             ref={timelineScrollRef}
             className="relative w-full border border-slate-200 dark:border-slate-800/60 rounded-md bg-[#F8FAFC] dark:bg-[#0F172A] shadow-sm overflow-x-auto overflow-y-hidden"
           >
-            {/* Inner Scaled Canvas */}
+            {/* 内部缩放画布 */}
             <div
               ref={timelineRef}
               onPointerDown={handlePointerDown}
@@ -528,14 +531,14 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
               style={{ width: `calc(176px + (100% - 176px) * ${zoomScale})`, minWidth: '100%' }}
               className={`relative flex flex-col pt-12 pb-2 select-none group/timeline touch-none ${isDraggingUI ? 'cursor-grabbing' : 'cursor-default'}`}
             >
-              {/* 顶栏时间刻度尺 (Time Ruler) */}
+              {/* 顶栏时间刻度尺 */}
               <div className="absolute top-5 left-44 right-0 h-6 border-b border-slate-200 dark:border-slate-800/80 pointer-events-none flex items-end overflow-hidden bg-slate-100/50 dark:bg-slate-900/50">
                 <svg className="w-full h-full" preserveAspectRatio="none">
                   {Array.from({ length: Math.floor(100 * zoomScale) }).map((_, i) => (
                       <rect key={i} x={`${(i / Math.floor(100 * zoomScale)) * 100}%`} y={i % 10 === 0 ? "40%" : "70%"} width="1" height="100%" fill="currentColor" className="text-slate-300 dark:text-slate-600" />
                   ))}
                 </svg>
-                {/* Labels */}
+                {/* 标签 */}
                 <div className="absolute top-1 left-0 right-0 h-full text-[9px] font-mono text-slate-400">
                   {Array.from({ length: Math.floor(10 * zoomScale) + 1 }).map((_, i, arr) => {
                     const pct = i / (arr.length - 1)
@@ -549,7 +552,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                 </div>
               </div>
 
-              {/* 贯穿式垂直 Playhead 指示线 */}
+              {/* 贯穿式垂直播放头指示线 */}
               <div
                 className="absolute top-5 bottom-0 w-px z-40"
                 style={{ left: `calc(176px + (100% - 176px) * ${playheadPercent / 100})` }}
@@ -572,7 +575,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
 
               {/* 轨道 1: 画面轨道 V1 */}
               <div className="flex items-center relative -mt-px group hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                <div className="w-44 shrink-0 flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800/80 pl-3 py-3 z-30 sticky left-0 bg-[#F8FAFC] dark:bg-[#0F172A]">
+                <div ref={headerRef} className="w-44 shrink-0 flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800/80 pl-3 py-3 z-30 sticky left-0 bg-[#F8FAFC] dark:bg-[#0F172A]">
                   <Video className="w-3.5 h-3.5 text-slate-400" />
                   <span>画面轨道 V1</span>
                 </div>

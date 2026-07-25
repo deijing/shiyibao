@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "视译宝",
+  "version": "0.1.2",
+  "identifier": "com.shiyibao.desktop",
+  "build": {
+    "beforeDevCommand": "npm --prefix app run dev -- --host 127.0.0.1",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm --prefix app run build",
+    "frontendDist": "../app/dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:*; img-src 'self' asset: http://asset.localhost data: blob: http://127.0.0.1:*; media-src 'self' asset: http://asset.localhost blob: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/shiyibao-backend"
+    ],
+    "category": "Video",
+    "shortDescription": "本地视频转译与配音工具",
+    "longDescription": "视译宝是一款本地运行的视频转译、字幕翻译、语音合成与混流工具。",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "windows": {
+      "nsis": {
+        "languages": [
+          "SimpChinese"
+        ]
+      }
+    }
+  }
+}

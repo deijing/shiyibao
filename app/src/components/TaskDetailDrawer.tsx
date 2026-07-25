@@ -5,9 +5,33 @@ import {
   Clock, Languages, Mic, Sparkles, ArrowDownCircle, RefreshCw,
   AlertCircle
 } from 'lucide-react'
-import { getTaskStatus, getTaskLogs, getExportUrl, getSubtitles, startTask, type TaskStatus, type TaskLogItem } from '@/lib/api'
+import { getTaskStatus, getTaskLogs, getExportUrl, getSubtitles, startTask, getThumbnailUrl, type TaskStatus, type TaskLogItem } from '@/lib/api'
 import { loadSettings } from './SettingsPanel'
 import { Button } from '@/components/ui/button'
+
+function TaskDetailVideoThumbnail({ taskId, alt }: { taskId: string; alt?: string }) {
+  const [hasError, setHasError] = useState(false)
+  const thumbnailUrl = getThumbnailUrl(taskId)
+
+  if (hasError || !taskId) {
+    return (
+      <div className="w-24 sm:w-28 aspect-video rounded-xl bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/60 dark:to-purple-950/60 border border-indigo-100 dark:border-indigo-900/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 shadow-2xs">
+        <FileVideo className="w-6 h-6" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="w-24 sm:w-28 aspect-video rounded-xl overflow-hidden border border-slate-200/80 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 shrink-0 shadow-xs">
+      <img
+        src={thumbnailUrl}
+        alt={alt || '视频封面'}
+        onError={() => setHasError(true)}
+        className="w-full h-full object-cover"
+      />
+    </div>
+  )
+}
 
 const LANG_LABELS: Record<string, string> = {
   zh: '中文',
@@ -16,7 +40,7 @@ const LANG_LABELS: Record<string, string> = {
   ko: '한국어',
 }
 
-// 5 Macro Steps for Visual Stepper
+// 可视化步骤条的五个阶段
 const PIPELINE_STEPS = [
   { id: 'upload', label: '上传解析', stages: ['pending', 'extracting_audio'] },
   { id: 'asr', label: '语音识别(ASR)', stages: ['transcribing'] },
@@ -25,7 +49,7 @@ const PIPELINE_STEPS = [
   { id: 'mix', label: '视频合并导出', stages: ['mixing', 'complete'] },
 ]
 
-// Contextual placebo log phrases for long-running AI operations
+// 长时间 AI 操作的上下文模拟日志
 const PLACEBO_LOG_PHRASES: Record<string, string[]> = {
   translating: [
     '正在分析视频对话上下文与特定领域词汇...',
@@ -69,7 +93,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
   const logConsoleRef = useRef<HTMLDivElement>(null)
   const placeboIndexRef = useRef(0)
 
-  // Fetch status and backend logs
+  // 获取状态与后端日志
   const fetchDetail = useCallback(async () => {
     if (!taskId) return
     try {
@@ -82,7 +106,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
       if (backendLogs && backendLogs.length > 0) {
         setLogs(backendLogs)
       } else {
-        // Fallback default initial log if backend logs not accumulated yet
+        // 后端日志尚未积累时使用默认初始日志
         setLogs([
           {
             timestamp: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
@@ -93,7 +117,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
         ])
       }
     } catch {
-      /* ignore fetch error */
+      /* 忽略拉取错误 */
     } finally {
       setLoading(false)
     }
@@ -108,7 +132,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
     return () => window.clearInterval(interval)
   }, [isOpen, taskId, fetchDetail])
 
-  // Placebo log generator during ongoing stages
+  // 进行中阶段的模拟日志生成器
   useEffect(() => {
     if (!isOpen || !status) return
     const stage = status.stage
@@ -133,7 +157,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
       const tag = tagMap[stage] || '系统'
 
       setLogs((prev) => {
-        // Avoid adding duplicate identical message
+        // 避免添加重复消息
         if (prev.length > 0 && prev[prev.length - 1].message === msg) return prev
         return [
           ...prev,
@@ -150,7 +174,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
     return () => window.clearInterval(timer)
   }, [isOpen, status])
 
-  // Auto-scroll terminal log console to bottom
+  // 自动滚动终端日志至底部
   useEffect(() => {
     if (autoScroll && logConsoleRef.current) {
       logConsoleRef.current.scrollTop = logConsoleRef.current.scrollHeight
@@ -224,7 +248,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
 
   if (!isOpen) return null
 
-  // Determine current active step index for stepper
+  // 确定步骤条当前激活索引
   const currentStage = status?.stage || 'pending'
   const isError = currentStage === 'error'
   const isComplete = currentStage === 'complete'
@@ -239,12 +263,12 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden flex justify-end bg-slate-900/50 backdrop-blur-xs transition-opacity duration-300">
-      {/* Backdrop Click to Close */}
+      {/* 点击遮罩关闭 */}
       <div className="absolute inset-0" onClick={onClose} />
 
-      {/* Main Drawer Content */}
+      {/* 抽屉主体内容 */}
       <div className="relative w-full max-w-4xl bg-slate-50 dark:bg-slate-950 h-full shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-800 transition-transform duration-300 ease-out translate-x-0 overflow-y-auto">
-        {/* Top Header & Breadcrumbs */}
+        {/* 顶部标题与面包屑 */}
         <div className="sticky top-0 z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Button
@@ -269,7 +293,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
             </div>
           </div>
 
-          {/* Action Header Buttons */}
+          {/* 标题操作按钮 */}
           <div className="flex items-center gap-2">
             {isComplete && taskId && (
               <>
@@ -308,7 +332,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
           </div>
         </div>
 
-        {/* Drawer Body Container */}
+        {/* 抽屉主体容器 */}
         <div className="p-6 space-y-6 flex-grow">
           {loading && !status ? (
             <div className="py-24 flex flex-col items-center justify-center text-slate-400 gap-3">
@@ -317,13 +341,11 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
             </div>
           ) : (
             <>
-              {/* Task Overview Card */}
+              {/* 任务概览卡片 */}
               <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex items-start gap-4 min-w-0">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/60 dark:to-purple-950/60 border border-indigo-100 dark:border-indigo-900/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 shadow-2xs">
-                      <FileVideo className="w-6 h-6" />
-                    </div>
+                    <TaskDetailVideoThumbnail taskId={taskId || ''} alt={status?.filename} />
 
                     <div className="min-w-0">
                       <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 truncate max-w-lg mb-1">
@@ -357,7 +379,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                     </div>
                   </div>
 
-                  {/* Status Badge */}
+                  {/* 状态徽标 */}
                   <div className="shrink-0 self-start sm:self-center">
                     {isComplete && (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/80 shadow-2xs">
@@ -383,7 +405,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                 </div>
               </div>
 
-              {/* Core Area 1: Visual Stepper */}
+              {/* 核心区域一：可视化步骤条 */}
               <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-6">
                 <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-6 flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-indigo-500" />
@@ -398,7 +420,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
 
                     return (
                       <div key={step.id} className="relative flex-1 flex flex-col items-center group">
-                        {/* Connecting line */}
+                        {/* 连接线 */}
                         {idx < PIPELINE_STEPS.length - 1 && (
                           <div className="absolute top-4 left-1/2 w-full h-0.5 bg-slate-200 dark:bg-slate-800 z-0">
                             <div
@@ -416,7 +438,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                           </div>
                         )}
 
-                        {/* Step Circle Icon */}
+                        {/* 步骤圆形图标 */}
                         <div
                           className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all z-10 ${
                             isStepDone
@@ -439,7 +461,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                           )}
                         </div>
 
-                        {/* Step Title Label */}
+                        {/* 步骤标题标签 */}
                         <span
                           className={`text-xs mt-3 font-medium transition-colors text-center ${
                             isStepDone
@@ -459,9 +481,9 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                 </div>
               </div>
 
-              {/* Core Area 2: Live Log Console */}
+              {/* 核心区域二：实时日志控制台 */}
               <div className="bg-slate-950 dark:bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col">
-                {/* Console Header Bar */}
+                {/* 控制台标题栏 */}
                 <div className="bg-slate-900/90 dark:bg-slate-850 px-4 py-3 border-b border-slate-800 flex items-center justify-between select-none">
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1.5">
@@ -475,7 +497,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                     </div>
                   </div>
 
-                  {/* Terminal Controls */}
+                  {/* 终端控制项 */}
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setAutoScroll((prev) => !prev)}
@@ -509,7 +531,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                   </div>
                 </div>
 
-                {/* Console Log Terminal Window */}
+                {/* 控制台日志窗口 */}
                 <div
                   ref={logConsoleRef}
                   className="h-84 overflow-y-auto p-4 sm:p-5 font-mono text-xs space-y-2 select-text bg-slate-950 scrollbar-thin scrollbar-thumb-slate-800"
@@ -560,7 +582,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                   )}
                 </div>
 
-                {/* Terminal Footer Status Bar */}
+                {/* 终端底部状态栏 */}
                 <div className="bg-slate-900/60 px-4 py-2 border-t border-slate-800 text-[11px] font-mono text-slate-500 flex items-center justify-between select-none">
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />

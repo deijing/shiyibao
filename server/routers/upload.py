@@ -14,7 +14,7 @@ router = APIRouter()
 @router.post("/upload", response_model=UploadResponse)
 async def upload(file: UploadFile = File(...)) -> UploadResponse:
     task_id = str(uuid.uuid4())
-    # Strip any path components a client might smuggle in the filename.
+    # 移除客户端可能夹带在文件名中的路径组件。
     filename = Path(file.filename or "upload.mp4").name
 
     upload_dir = UPLOADS_DIR / task_id

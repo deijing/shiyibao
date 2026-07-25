@@ -1,0 +1,20 @@
+[package]
+name = "shiyibao"
+version = "0.1.2"
+description = "视译宝桌面应用"
+authors = ["ShiYiBao"]
+edition = "2021"
+
+[lib]
+name = "shiyibao_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+uuid = { version = "1", features = ["v4"] }

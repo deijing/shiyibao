@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
-import { ArrowLeftRight, Upload, Sparkles, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Zap } from 'lucide-react'
+import { ArrowLeftRight, Upload, Sparkles, PartyPopper, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Zap } from 'lucide-react'
 import { uploadVideo, startTask, fetchServerSettings } from '@/lib/api'
 import { saveActiveTaskId } from '@/lib/task-session'
 import {
   loadSettings,
   saveSettings,
+  mergeFillEmpty,
   getGeminiModelDisplayName,
   getLanguageDisplayName,
   SOURCE_LANGUAGES,
@@ -55,7 +56,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
     fetchServerSettings().then((serverData) => {
       if (serverData && (serverData.geminiApiKey || serverData.geminiModel)) {
         setSettings((prev) => {
-          const merged = { ...prev, ...serverData }
+          const merged = mergeFillEmpty(prev, serverData)
           localStorage.setItem('shiyibao-settings', JSON.stringify(merged))
           return merged
         })
@@ -133,7 +134,12 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
 
       const currentModel = settings.geminiModel || 'gemini-2.0-flash'
       addLog(`配置 AI [${getGeminiModelDisplayName(currentModel)}] 翻译引擎...`, 'AI', 'process')
+      const sourceLangLabel = (settings.sourceLang || 'auto') === 'auto'
+        ? '自动识别 (Auto)'
+        : getLanguageDisplayName(settings.sourceLang, true)
+      addLog(`初始语言配置: ${sourceLangLabel}${(settings.sourceLang || 'auto') === 'auto' ? ' (系统将在音频解析时自动判别)' : ''}`, '配置', 'info')
       addLog(`绑定音色模型: ${settings.mimoVoice || '默认预设'}`, '配置', 'info')
+
 
       await startTask(task_id, {
         gemini_api_key: settings.geminiApiKey,
@@ -142,10 +148,10 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
         voice: settings.mimoVoice,
         source_lang: settings.sourceLang || 'auto',
         target_lang: settings.targetLang || 'zh',
+        stream_mode: settings.streamMode || 'streaming',
       })
 
-      // Persist immediately after the backend accepts the task, so refreshing
-      // during the short transition animation can still restore it.
+      // 后端接收任务后立即持久化，避免短暂过渡动画期间刷新导致任务无法恢复。
       saveActiveTaskId(task_id)
 
       setProgressWidth('100%')
@@ -192,28 +198,28 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
   }
 
   return (
-    <div className="relative flex-grow flex items-center justify-center px-4 sm:px-6 lg:px-12 py-8 lg:py-12 overflow-hidden">
-      {/* 科技感极淡微网格背景 (Subtle Grid) */}
+    <div className="relative flex-grow flex items-center justify-center px-4 sm:px-6 lg:px-8 xl:px-12 py-4 sm:py-6 lg:py-8 overflow-y-auto">
+      {/* 科技感极淡微网格背景 */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#e2e8f018_1px,transparent_1px),linear-gradient(to_bottom,#e2e8f018_1px,transparent_1px)] bg-[size:3.5rem_3.5rem] dark:bg-[linear-gradient(to_right,#1e293b25_1px,transparent_1px),linear-gradient(to_bottom,#1e293b25_1px,transparent_1px)] [mask-image:radial-gradient(ellipse_70%_70%_at_50%_50%,#000_60%,transparent_100%)] pointer-events-none" />
 
-      {/* 底层弥散光晕 (Radial Soft Glow) */}
+      {/* 底层弥散光晕 */}
       <div className="absolute top-1/3 left-1/4 -translate-x-1/2 -translate-y-1/2 w-[550px] h-[350px] bg-slate-200/40 dark:bg-slate-800/25 blur-[140px] rounded-full pointer-events-none -z-10" />
       <div className="absolute bottom-1/3 right-1/4 translate-x-1/3 translate-y-1/3 w-[450px] h-[300px] bg-blue-500/5 dark:bg-blue-400/10 blur-[130px] rounded-full pointer-events-none -z-10" />
 
       {/* 65% / 35% 双栏网格容器 */}
-      <div className="w-full max-w-7xl mx-auto flex flex-col lg:flex-row gap-8 lg:gap-12 items-stretch relative z-10 my-auto">
+      <div className="w-full max-w-7xl mx-auto flex flex-col lg:flex-row gap-6 lg:gap-10 xl:gap-12 items-stretch relative z-10 my-auto">
         {/* 左侧 65%：主工作区 (核心拖拽上传) */}
         <div className="w-full lg:w-[65%] flex flex-col justify-center">
           {/* 左侧头部标语区 */}
-          <div className="mb-6">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/60 mb-3.5 shadow-2xs">
-              <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+          <div className="mb-4 sm:mb-6">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/60 mb-2.5 sm:mb-3.5 shadow-2xs">
+              <PartyPopper className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
               <span>SaaS 工作台 · 高维 AI 音视频转译</span>
             </div>
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 leading-tight mb-3">
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl xl:text-5xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 leading-tight mb-2 sm:mb-3">
               AI 赋能，打破语言边界
             </h1>
-            <p className="text-sm sm:text-base text-slate-500 dark:text-slate-400 max-w-xl leading-relaxed font-normal">
+            <p className="text-xs sm:text-sm lg:text-base text-slate-500 dark:text-slate-400 max-w-xl leading-relaxed font-normal">
               一键实现海外视频高精度字幕翻译与母语级音色重构，让内容跨国界无缝传播。
             </p>
           </div>
@@ -235,10 +241,10 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
             onChange={handleFileChange}
           />
 
-          {/* 紧凑贴合型双向语言选择工具栏 (Compact Segmented Capsule Bar) */}
+          {/* 紧凑贴合型双向语言选择工具栏 */}
           <div className="mb-4 flex justify-start">
             <div className="inline-flex items-center gap-1.5 p-1.5 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all">
-              {/* 初始语言 (源语言) Select */}
+              {/* 初始语言选择 */}
               <div className="flex items-center gap-1.5 pl-2">
                 <span className="text-xs font-medium text-slate-400 dark:text-slate-500 shrink-0 select-none">
                   初始语言:
@@ -294,7 +300,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                 <ArrowLeftRight className="w-3.5 h-3.5 group-hover:rotate-180 transition-transform duration-300" />
               </button>
 
-              {/* 目标语言 Select */}
+              {/* 目标语言选择 */}
               <div className="flex items-center gap-1.5 pr-1">
                 <span className="text-xs font-medium text-slate-400 dark:text-slate-500 pl-1 shrink-0 select-none">
                   目标语言:
@@ -329,10 +335,10 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`w-full relative cursor-pointer group transition-all duration-500 ease-out rounded-3xl p-8 sm:p-12 flex flex-col items-center justify-center min-h-[320px] text-center overflow-hidden backdrop-blur-2xl border ${
+            className={`w-full relative cursor-pointer group transition-all duration-300 ease-out rounded-3xl p-8 sm:p-12 flex flex-col items-center justify-center min-h-[320px] text-center overflow-hidden backdrop-blur-2xl border hover-card-lift ${
               isDragging
                 ? 'border-blue-500/60 dark:border-blue-400/60 bg-blue-50/30 dark:bg-slate-900/80 shadow-2xl shadow-blue-500/10 scale-[1.01] ring-2 ring-blue-500/20'
-                : 'bg-white/60 dark:bg-slate-900/50 border-white/80 dark:border-slate-800/80 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-2xl hover:shadow-slate-300/30 dark:hover:shadow-none hover:-translate-y-0.5'
+                : 'bg-white/60 dark:bg-slate-900/50 border-white/80 dark:border-slate-800/80 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] hover:border-slate-300 dark:hover:border-slate-700'
             }`}
           >
             {/* 未上传状态内容 */}
@@ -343,8 +349,18 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                 </div>
 
                 <p className="text-base sm:text-lg font-medium text-slate-800 dark:text-slate-200 tracking-tight">
-                  拖拽 <span className="text-purple-600 dark:text-purple-400 font-semibold px-0.5">{getLanguageDisplayName(settings.sourceLang, true)}</span> 视频文件至此处，一键转译为 <span className="text-purple-600 dark:text-purple-400 font-semibold px-0.5">{getLanguageDisplayName(settings.targetLang)}</span>，或<span className="text-blue-600 dark:text-blue-400 font-semibold underline underline-offset-4 decoration-blue-300 dark:decoration-blue-700 group-hover:decoration-blue-500 transition-colors ml-1">点击上传</span>
+                  {(!settings.sourceLang || settings.sourceLang === 'auto') ? (
+                    <>
+                      拖拽视频文件至此处（<span className="text-purple-600 dark:text-purple-400 font-semibold px-0.5">自动识别</span>原声语言），一键转译为 <span className="text-purple-600 dark:text-purple-400 font-semibold px-0.5">{getLanguageDisplayName(settings.targetLang)}</span>，或
+                    </>
+                  ) : (
+                    <>
+                      拖拽 <span className="text-purple-600 dark:text-purple-400 font-semibold px-0.5">{getLanguageDisplayName(settings.sourceLang, true)}</span> 视频文件至此处，一键转译为 <span className="text-purple-600 dark:text-purple-400 font-semibold px-0.5">{getLanguageDisplayName(settings.targetLang)}</span>，或
+                    </>
+                  )}
+                  <span className="text-blue-600 dark:text-blue-400 font-semibold underline underline-offset-4 decoration-blue-300 dark:decoration-blue-700 group-hover:decoration-blue-500 transition-colors ml-1">点击上传</span>
                 </p>
+
                 <p className="text-xs sm:text-sm text-slate-400 dark:text-slate-500 font-normal mt-1.5">
                   支持 MP4, MOV, MKV 格式 (单文件最大上限 2GB)
                 </p>
@@ -360,7 +376,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
               </div>
             )}
 
-            {/* Morphing 进度加载状态 */}
+            {/* 变形进度加载状态 */}
             {morphing && (
               <div className="w-full max-w-md flex flex-col items-center justify-center py-4 animate-in fade-in duration-300">
                 <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-800/60 flex items-center justify-center mb-5 shadow-xs">
@@ -414,10 +430,10 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
 
             {/* 面板内容区 */}
             <div className="flex-grow flex flex-col justify-start">
-              {/* 空状态占位与骨架屏 (Empty State + Skeleton) */}
+              {/* 空状态占位与骨架屏 */}
               {logs.length === 0 && (
                 <div className="flex-grow flex flex-col justify-between py-2">
-                  {/* 骨架屏 Skeleton Loader */}
+                  {/* 骨架屏加载器 */}
                   <div className="space-y-4 mb-6 opacity-75">
                     <div className="flex items-center gap-3 p-2.5 rounded-xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/40 dark:border-slate-700/30 animate-pulse">
                       <div className="w-12 h-4 bg-slate-200/80 dark:bg-slate-700/60 rounded-md" />
@@ -438,7 +454,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                     </div>
                   </div>
 
-                  {/* Empty state 文字与图标说明 */}
+                  {/* 空状态文字与图标说明 */}
                   <div className="flex flex-col items-center text-center p-4 rounded-2xl bg-white/50 dark:bg-slate-800/30 border border-slate-200/50 dark:border-slate-800/50 my-auto">
                     <FileText className="w-8 h-8 text-slate-300 dark:text-slate-600 stroke-[1.2] mb-2" />
                     <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -451,7 +467,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                 </div>
               )}
 
-              {/* 实时日志流 (Staggered Fade-in) */}
+              {/* 实时日志流，交错淡入 */}
               {logs.length > 0 && (
                 <div className="space-y-2.5 overflow-y-auto max-h-[300px] pr-1">
                   {logs.map((log) => (

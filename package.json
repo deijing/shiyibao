@@ -1,0 +1,15 @@
+{
+  "name": "shiyibao-desktop",
+  "private": true,
+  "version": "0.1.2",
+  "scripts": {
+    "tauri": "tauri",
+    "sidecar:build": "python scripts/build_sidecar.py",
+    "sidecar:build:ffmpeg": "python scripts/build_sidecar.py --bundle-ffmpeg",
+    "desktop:dev": "npm run sidecar:build && tauri dev",
+    "desktop:build": "npm run sidecar:build && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

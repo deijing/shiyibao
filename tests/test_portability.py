@@ -16,6 +16,7 @@ def test_task_directory_rejects_non_uuid() -> None:
 
 def test_ffmpeg_error_explains_missing_path(monkeypatch) -> None:
     monkeypatch.setattr(audio.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(audio, "_common_media_dirs", lambda: [])
 
     with pytest.raises(RuntimeError, match="PATH"):
         asyncio.run(audio.run_ffmpeg(["-version"]))

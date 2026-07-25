@@ -11,11 +11,44 @@ import {
   type PerformanceSettings,
 } from '@/lib/api'
 
-const RECOMMENDED: PerformanceSettings = {
+const DEFAULT_RECOMMENDED: PerformanceSettings = {
   max_concurrent_tasks: 4,
   translate_concurrency: 3,
   translate_batch_size: 20,
   tts_concurrency: 6,
+}
+
+function getRecommendedSettings(hardware?: { logical_cores: number; memory_gb: number | null } | null): PerformanceSettings {
+  if (!hardware) return DEFAULT_RECOMMENDED
+  const cores = hardware.logical_cores || 4
+  const memory = hardware.memory_gb || 8
+
+  if (cores <= 4 || memory <= 8) {
+    return {
+      max_concurrent_tasks: 2,
+      translate_concurrency: 2,
+      translate_batch_size: 15,
+      tts_concurrency: 4,
+    }
+  }
+
+  if (cores <= 8 || memory <= 16) {
+    return {
+      max_concurrent_tasks: 3,
+      translate_concurrency: 3,
+      translate_batch_size: 20,
+      tts_concurrency: 6,
+    }
+  }
+
+  const taskCount = Math.min(6, Math.max(4, Math.floor(cores / 3)))
+  const ttsCount = Math.min(12, Math.max(6, Math.floor(cores * 0.5)))
+  return {
+    max_concurrent_tasks: taskCount,
+    translate_concurrency: 4,
+    translate_batch_size: 25,
+    tts_concurrency: ttsCount,
+  }
 }
 
 type SettingKey = keyof PerformanceSettings
@@ -81,10 +114,20 @@ function clamp(value: number, min: number, max: number) {
 
 export default function PerformancePage() {
   const [data, setData] = useState<PerformanceResponse | null>(null)
-  const [settings, setSettings] = useState<PerformanceSettings>(RECOMMENDED)
+  const [settings, setSettings] = useState<PerformanceSettings>(DEFAULT_RECOMMENDED)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const handleApplyRecommended = () => {
+    const recommended = getRecommendedSettings(data?.hardware)
+    setSettings(recommended)
+    const chipName = data?.hardware.chip ? data.hardware.chip.split(' ')[0] : '本机硬件'
+    setMessage({
+      type: 'success',
+      text: `已根据 ${chipName} (${data?.hardware.logical_cores || '--'}逻辑核心 / ${data?.hardware.memory_gb || '--'}GB内存) 智能自动分配最合适并发配置`,
+    })
+  }
 
   useEffect(() => {
     getPerformanceSettings()
@@ -122,7 +165,7 @@ export default function PerformancePage() {
   }
 
   return (
-    <div className="flex-grow bg-slate-50/70 dark:bg-slate-950/50 px-4 py-8 sm:px-6">
+    <div className="flex-grow flex flex-col w-full bg-slate-50/70 dark:bg-slate-950/50 px-4 sm:px-6 lg:px-8 py-6 sm:py-8 overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl space-y-7">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex items-center gap-4">
@@ -137,10 +180,12 @@ export default function PerformancePage() {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => { setSettings(RECOMMENDED); setMessage(null) }}
+              onClick={handleApplyRecommended}
+              title="根据当前电脑 CPU 核心数与内存自动计算并分配最佳性能并发"
               className="rounded-xl border-slate-200/80 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >
-              <RotateCcw className="mr-2 h-4 w-4" /> M5 Pro 推荐值
+              <RotateCcw className="mr-2 h-4 w-4 text-violet-500" />
+              <span>根据本机硬件智能匹配推荐值</span>
             </Button>
             <Button
               onClick={save}
@@ -204,13 +249,16 @@ export default function PerformancePage() {
         </div>
 
         {/* 底部说明卡片：完美宽度对齐与简约灰色微卡片 */}
-        <div className="rounded-2xl border border-slate-200/80 bg-slate-100/80 dark:border-slate-800/80 dark:bg-slate-900/50 p-5 text-xs sm:text-sm text-slate-600 dark:text-slate-400 shadow-xs">
+        <div className="rounded-2xl border border-slate-200/80 bg-slate-100/80 dark:border-slate-800/80 dark:bg-slate-900/50 p-5 text-xs sm:text-sm text-slate-600 dark:text-slate-400 shadow-xs space-y-2">
           <div className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-200">
             <Info className="h-4 w-4 text-violet-600 dark:text-violet-400 shrink-0" />
-            <span>调度说明</span>
+            <span>智能硬件感知与调度说明</span>
           </div>
-          <p className="mt-2 leading-relaxed">
-            降低并发不会中断已经执行的任务，新请求会等待当前占用下降；提高并发会立即释放更多等待槽位。Gemini 与 MiMo 属于远程服务，并发过高时可能出现 429 速率限制，此时建议逐级回调。
+          <p className="leading-relaxed">
+            系统启动时会自动精准识别您当前电脑的 <strong>CPU 芯片型号、逻辑核心数与内存大小</strong>，全面兼容 Windows (x86/ARM64)、macOS 及 Linux。点击右上角“智能匹配推荐值”，即可根据您的具体硬件规格一键自动分配最佳并发与资源。
+          </p>
+          <p className="leading-relaxed text-slate-500 dark:text-slate-500">
+            降低并发不会中断已在运行的任务；Gemini 与 MiMo 属于云端服务，若遇到 429 速率限制可微调降低云端并发槽位。
           </p>
         </div>
       </div>
@@ -234,7 +282,7 @@ function HardwareCard({
   iconBg: string
 }) {
   return (
-    <div className="rounded-2xl border border-slate-100 dark:border-slate-800/60 bg-white dark:bg-slate-900/90 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.03)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)] hover:shadow-[0_14px_35px_rgba(0,0,0,0.05)] transition-all duration-200">
+    <div className="rounded-2xl border border-slate-100 dark:border-slate-800/60 bg-white dark:bg-slate-900/90 p-5 hover-card-lift">
       <div className="flex items-start justify-between">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{label}</p>
@@ -287,7 +335,7 @@ function ParameterCard({
   const isWarningActive = warningThreshold !== undefined ? value > warningThreshold : Boolean(warning)
 
   return (
-    <div className="rounded-2xl border border-slate-100 dark:border-slate-800/60 bg-white dark:bg-slate-900/90 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.03)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)] hover:shadow-[0_14px_35px_rgba(0,0,0,0.05)] transition-all duration-200">
+    <div className="rounded-2xl border border-slate-100 dark:border-slate-800/60 bg-white dark:bg-slate-900/90 p-5 hover-card-lift">
       <div className="flex items-start gap-3.5">
         <div className={`rounded-xl p-2.5 shrink-0 ${color}`}>
           <Icon className="h-5 w-5 stroke-[1.75]" />

@@ -1,4 +1,4 @@
-"""Cross-platform development launcher for ShiYiBao."""
+"""视译宝的跨平台开发启动器。"""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def main() -> int:
 
     print("正在启动视译宝……")
     children.append(subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "server.main:app", "--host", "127.0.0.1", "--port", "8000"],
+        [sys.executable, "-m", "uvicorn", "server.main:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
         cwd=ROOT,
     ))
     children.append(subprocess.Popen(

@@ -7,8 +7,7 @@ from pathlib import Path
 from bcut_asr import BcutASR
 from bcut_asr.orm import ResultStateEnum
 
-# Bilibili's bcut endpoint returns 412 without a browser-like UA; patch the
-# session headers before any request is issued.
+# 必剪接口缺少浏览器 UA 时会返回 412；请求前需补充会话请求头。
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Cache-Control": "no-cache",
@@ -69,7 +68,7 @@ async def transcribe(
     audio_path: Path,
     log_cb: Callable[..., None] | None = None,
 ) -> list[dict]:
-    """Transcribe the extracted audio via BcutASR (blocking, run in a thread)."""
+    """通过 BcutASR 转写提取的音频（阻塞操作，在线程中执行）。"""
     segments = await asyncio.to_thread(_transcribe_sync, audio_path, log_cb)
     out_path = task_dir / "subtitles_src.json"
     out_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -48,7 +48,7 @@ def test_assemble_track_uses_each_segments_own_duration(monkeypatch, tmp_path) -
         tts._assemble_track(
             [
                 (0.0, 3.0, clip),
-                # The ten-second next start must not enlarge the first clip.
+                # 下一段从第十秒开始时，不得拉长首段音频。
                 (10.0, 12.0, clip),
             ],
             tmp_path / "dubbed.wav",

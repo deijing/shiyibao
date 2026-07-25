@@ -14,18 +14,22 @@ import {
   Maximize2,
   Loader2,
   ArrowRight,
+  ArrowLeft,
   ShieldCheck,
   ChevronRight,
 } from 'lucide-react'
 import { getTaskStatus, getTaskLogs, getSubtitles, type TaskStatus, type TaskLogItem, type SubtitleSegment } from '@/lib/api'
+import { clearActiveTaskId } from '@/lib/task-session'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import TaskDetailDrawer from './TaskDetailDrawer'
+import TencentStreamPlayer from './TencentStreamPlayer'
 import { loadSettings, getGeminiModelDisplayName, getLanguageDisplayName, type AppSettings } from './SettingsPanel'
 
 interface ProcessingStateProps {
   taskId: string
   onComplete: () => void
+  onNavigateToHistory?: () => void
 }
 
 type ProcessingStepIndex = 1 | 2 | 3
@@ -62,7 +66,29 @@ function stageLabel(stage: TaskStatus['stage']): string {
   return labels[stage] ?? stage
 }
 
-export default function ProcessingState({ taskId, onComplete }: ProcessingStateProps) {
+interface ParsedTtsLog {
+  current: number
+  total: number
+  subRange: string
+  text: string
+  percent: number
+}
+
+function parseTtsLogMessage(msg: string): ParsedTtsLog | null {
+  if (!msg) return null
+  const match = msg.match(/语义段\s*\[(\d+)\/(\d+)\](?:\s*\(原字幕\s*([\d-]+)\))?\s*(?:"([^"]+)"|'([^']+)')?/)
+  if (match) {
+    const current = parseInt(match[1], 10)
+    const total = parseInt(match[2], 10)
+    const subRange = match[3] || ''
+    const text = match[4] || match[5] || ''
+    const percent = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0
+    return { current, total, subRange, text, percent }
+  }
+  return null
+}
+
+export default function ProcessingState({ taskId, onComplete, onNavigateToHistory }: ProcessingStateProps) {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings())
   const [status, setStatus] = useState<TaskStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -83,12 +109,12 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
 
   const currentModelDisplayName = getGeminiModelDisplayName(settings.geminiModel)
 
-  // Active step view (user can switch steps or let auto-follow)
+  // 当前步骤视图（用户可切换步骤或启用自动跟随）
   const [activeStep, setActiveStep] = useState<ProcessingStepIndex>(1)
   const [autoFollow, setAutoFollow] = useState(true)
   const [logFilter, setLogFilter] = useState<'all' | 'gemini' | 'asr' | 'tts' | 'ffmpeg'>('all')
 
-  // Dynamic real data text
+  // 动态实时数据文本
   const [liveSourceText, setLiveSourceText] = useState<string>('')
   const [liveTransText, setLiveTransText] = useState<string>('')
   const [liveTtsMsg, setLiveTtsMsg] = useState<string>('')
@@ -103,7 +129,7 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const completedRef = useRef(false)
-  const logsEndRef = useRef<HTMLDivElement | null>(null)
+  const logsContainerRef = useRef<HTMLDivElement | null>(null)
 
   const pollData = useCallback(async () => {
     try {
@@ -125,35 +151,19 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
 
         const translatedSegs = realSubs.filter(seg => seg.translated_text && seg.translated_text !== seg.source_text)
         if (translatedSegs.length > 0) {
-          const lastSeg = translatedSegs[translatedSegs.length - 1]
-          setLiveSourceText(lastSeg.source_text)
-          setLiveTransText(lastSeg.translated_text)
+          const lastTrans = translatedSegs[translatedSegs.length - 1]
+          setLiveSourceText(lastTrans.source_text)
+          setLiveTransText(lastTrans.translated_text)
         } else if (realSubs.length > 0) {
           setLiveSourceText(realSubs[0].source_text)
-          setLiveTransText('Gemini 大模型翻译处理中...')
         }
       }
 
       if (latestLogs && latestLogs.length > 0) {
         setLogs(latestLogs)
-
-        for (let i = latestLogs.length - 1; i >= 0; i--) {
-          const l = latestLogs[i]
-          if (l.tag === 'AI 翻译' && l.message.includes('➔')) {
-            const parts = l.message.split('➔')
-            if (parts.length === 2) {
-              const srcMatch = parts[0].match(/"([^"]+)"/)
-              const dstMatch = parts[1].match(/"([^"]+)"/)
-              if (srcMatch && dstMatch) {
-                setLiveSourceText(srcMatch[1])
-                setLiveTransText(dstMatch[1])
-              }
-            }
-          }
-
-          if (l.tag === '音色合成' && l.message.includes('合成成功')) {
-            setLiveTtsMsg(l.message)
-          }
+        const ttsLogs = latestLogs.filter(l => l.tag.includes('音色') || l.tag.includes('TTS') || l.message.includes('语义段'))
+        if (ttsLogs.length > 0) {
+          setLiveTtsMsg(ttsLogs[ttsLogs.length - 1].message)
         }
       }
 
@@ -171,10 +181,11 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
       if (allDone && !completedRef.current) {
         completedRef.current = true
         if (intervalRef.current) clearInterval(intervalRef.current)
+        clearActiveTaskId()
         setTimeout(onComplete, 1200)
       }
     } catch {
-      // network error, keep polling
+      // 网络错误，继续轮询
     }
   }, [taskId, onComplete, autoFollow])
 
@@ -186,10 +197,10 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
     }
   }, [pollData])
 
-  // Scroll logs to bottom on update
+  // 更新时将日志容器内部滚动到底部（不滚动窗口）
   useEffect(() => {
-    if (autoScrollLogs && logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    if (autoScrollLogs && logsContainerRef.current) {
+      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight
     }
   }, [logs, autoScrollLogs])
 
@@ -200,11 +211,22 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
     setTimeout(() => setCopiedLog(false), 2000)
   }
 
-  // Calculate current stage progress
-  const currentStageProgress = status ? status.progress : 0
+  // 解析 TTS 日志以获取实时分段进度
+  const parsedTts = parseTtsLogMessage(liveTtsMsg)
+
+  // 计算动态连续进度
+  let smoothProgress = status ? status.progress : 0
+  if (status?.stage === 'synthesizing' && parsedTts && parsedTts.total > 0) {
+    smoothProgress = Math.min(89, Math.max(70, 70 + Math.round((parsedTts.percent * 20) / 100)))
+  } else if (status?.stage === 'translating' && subtitles.length > 0) {
+    const translatedCount = subtitles.filter(s => s.translated_text && s.translated_text !== s.source_text).length
+    const transRatio = translatedCount / subtitles.length
+    smoothProgress = Math.min(69, Math.max(50, 50 + Math.round(transRatio * 20)))
+  }
+
   const currentAutoStepIndex = status ? stageToStepNumber(status.stage) : 1
 
-  // Filter logs for terminal view
+  // 筛选终端视图日志
   const filteredLogs = logs.filter((l) => {
     if (logFilter === 'all') return true
     if (logFilter === 'gemini') return l.tag.includes('Gemini') || l.tag.includes('AI 翻译')
@@ -215,8 +237,8 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
   })
 
   return (
-    <div className="flex-grow flex flex-col items-center justify-center p-4 sm:p-6 max-w-6xl mx-auto w-full">
-      {/* 1. Header & Title Section */}
+    <div className="flex-grow flex flex-col items-center justify-start p-3 sm:p-6 max-w-6xl mx-auto w-full overflow-y-auto">
+      {/* 1. 标题区域 */}
       <div className="text-center mb-6 w-full max-w-4xl">
         <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-600 dark:text-purple-400 text-xs font-semibold mb-3 backdrop-blur-md">
           <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
@@ -257,10 +279,32 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
         </div>
       )}
 
-      {/* 2. Top Stepper (顶部时间轴 / 步骤条) */}
+      {status?.preview_ready && (
+        <div className="w-full max-w-5xl mb-7 flex flex-col items-center gap-3 animate-in fade-in slide-in-from-top-2">
+          <div className="w-full flex items-center justify-between px-1">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-ping" />
+              <h3 className="font-extrabold text-slate-900 dark:text-slate-100 text-sm sm:text-base flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-emerald-500" />
+                流式视频秒开与后台增量缓冲 (Tencent Stream Engine)
+              </h3>
+            </div>
+            <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+              ⚡ 首段 {Math.max(1, Math.round(status.preview_duration || 0))}s 秒开 · 后台无感续播
+            </span>
+          </div>
+          <TencentStreamPlayer
+            taskId={taskId}
+            status={status}
+            subtitles={subtitles}
+          />
+        </div>
+      )}
+
+      {/* 2. 顶部步骤条（顶部时间轴 / 步骤条） */}
       <div className="w-full max-w-5xl mb-7">
-        <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl rounded-2xl p-3 sm:p-4 border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center justify-between gap-2 sm:gap-3 relative overflow-hidden">
-          {/* Stepper Item 1 */}
+        <div className="bg-white/90 dark:bg-slate-900/80 backdrop-blur-xl rounded-2xl p-3 sm:p-4 border border-slate-200/90 dark:border-slate-800 shadow-sm flex items-center justify-between gap-2 sm:gap-3 relative overflow-hidden">
+          {/* 步骤条项目 1 */}
           <button
             onClick={() => {
               setActiveStep(1)
@@ -300,7 +344,7 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
             </div>
           </button>
 
-          {/* Stepper Connector 1-2 */}
+          {/* 步骤条连接线 1-2 */}
           <div className="flex items-center shrink-0">
             {step1Done ? (
               <div className="h-0.5 w-4 sm:w-8 bg-emerald-500 rounded-full transition-all duration-300" />
@@ -311,7 +355,7 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
             )}
           </div>
 
-          {/* Stepper Item 2 */}
+          {/* 步骤条项目 2 */}
           <button
             onClick={() => {
               setActiveStep(2)
@@ -351,7 +395,7 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
             </div>
           </button>
 
-          {/* Stepper Connector 2-3 */}
+          {/* 步骤条连接线 2-3 */}
           <div className="flex items-center shrink-0">
             {step2Done ? (
               <div className="h-0.5 w-4 sm:w-8 bg-emerald-500 rounded-full transition-all duration-300" />
@@ -362,7 +406,7 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
             )}
           </div>
 
-          {/* Stepper Item 3 */}
+          {/* 步骤条项目 3 */}
           <button
             onClick={() => {
               setActiveStep(3)
@@ -416,77 +460,88 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
         </div>
       </div>
 
-      {/* 3. The Big Focus Card (超级巨幕卡片 - 40% Visualizer : 60% Pro Terminal) */}
-      <div className="w-full max-w-5xl rounded-2xl overflow-hidden focus-card-glow bg-slate-900 border border-white/10 shadow-2xl transition-all duration-300 flex flex-col min-h-[520px]">
-        {/* Focus Card Top Bar */}
-        <div className="bg-slate-950/80 px-5 py-3 border-b border-slate-800 flex items-center justify-between gap-4">
+      {/* 3. 浅色主题实时处理控制面板 */}
+      <div className="w-full max-w-5xl rounded-2xl overflow-hidden bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-xl dark:shadow-2xl transition-all duration-300 flex flex-col min-h-[520px]">
+        {/* 聚焦卡片顶部栏 */}
+        <div className="bg-slate-50/90 dark:bg-slate-950/80 px-5 py-3 border-b border-slate-200/90 dark:border-slate-800 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-rose-500 inline-block opacity-80" />
-              <span className="w-3 h-3 rounded-full bg-amber-500 inline-block opacity-80" />
-              <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block opacity-80" />
+              <span className="w-3 h-3 rounded-full bg-rose-400 inline-block" />
+              <span className="w-3 h-3 rounded-full bg-amber-400 inline-block" />
+              <span className="w-3 h-3 rounded-full bg-emerald-400 inline-block" />
             </div>
-            <span className="text-xs font-mono text-slate-400 truncate border-l border-slate-800 pl-3">
+            <span className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate border-l border-slate-200 dark:border-slate-800 pl-3">
               Task #{taskId.slice(0, 8)}
             </span>
             {status && (
-              <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 truncate">
+              <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-500/20 truncate">
                 {stageLabel(status.stage)}
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-mono text-slate-400 hidden sm:inline">
-              Progress: <strong className="text-purple-400 font-semibold">{currentStageProgress}%</strong>
+          <div className="flex items-center gap-2.5">
+            <span className="text-xs font-mono text-slate-600 dark:text-slate-400 hidden sm:inline mr-1">
+              Progress: <strong className="text-purple-600 dark:text-purple-400 font-semibold">{smoothProgress}%</strong>
             </span>
+            {onNavigateToHistory && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onNavigateToHistory}
+                className="text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700 h-7 px-2.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 text-slate-500" />
+                后台运行 / 浏览历史
+              </Button>
+            )}
             <Button
               size="sm"
-              variant="ghost"
+              variant="outline"
               onClick={() => setShowLogDrawer(true)}
-              className="text-xs text-slate-300 hover:text-white hover:bg-slate-800 h-7 px-2.5 rounded-lg flex items-center gap-1.5 cursor-pointer"
+              className="text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700 h-7 px-2.5 rounded-lg flex items-center gap-1.5 cursor-pointer"
             >
-              <Maximize2 className="w-3.5 h-3.5 text-purple-400" />
+              <Maximize2 className="w-3.5 h-3.5 text-purple-500" />
               全屏模态框
             </Button>
           </div>
         </div>
 
-        {/* Focus Card Main Split Body (40% : 60%) */}
+        {/* 聚焦卡片主体分栏（40% : 60%） */}
         <div className="flex-grow grid grid-cols-1 md:grid-cols-12 min-h-[460px]">
-          {/* Left Column (40% width - Visualizer Area) */}
-          <div className="md:col-span-5 bg-slate-900/90 text-white p-6 flex flex-col justify-between relative overflow-hidden border-b md:border-b-0 md:border-r border-slate-800 backdrop-blur-xl">
-            {/* Ambient Backlight Glow */}
-            <div className="absolute top-1/4 left-1/4 w-48 h-48 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
-            <div className="absolute bottom-1/4 right-1/4 w-48 h-48 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
+          {/* 左侧栏（40% 宽度 - 浅色主题可视化区域） */}
+          <div className="md:col-span-5 bg-slate-50/70 dark:bg-slate-900/90 text-slate-900 dark:text-white p-6 flex flex-col justify-between relative overflow-hidden border-b md:border-b-0 md:border-r border-slate-200/90 dark:border-slate-800 backdrop-blur-xl">
+            {/* 柔和环境背光光晕 */}
+            <div className="absolute top-1/4 left-1/4 w-48 h-48 bg-purple-500/10 dark:bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute bottom-1/4 right-1/4 w-48 h-48 bg-indigo-500/10 dark:bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
 
-            {/* Left Card View Animation Container */}
+            {/* 左侧卡片视图动画容器 */}
             <div key={activeStep} className="animate-slide-fade-in flex flex-col h-full justify-between z-10">
-              {/* Step 1 Visualizer: Audio Waveform */}
+              {/* 步骤 1 可视化器：音频波形 */}
               {activeStep === 1 && (
                 <>
                   <div>
                     <div className="flex items-center gap-2.5 mb-4">
-                      <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 text-purple-400 flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-500/20 border border-purple-200 dark:border-purple-500/40 text-purple-600 dark:text-purple-400 flex items-center justify-center">
                         <Layers className="w-5 h-5" />
                       </div>
                       <div>
-                        <span className="text-[10px] font-mono text-purple-400 uppercase tracking-widest">Step 01 — Focus</span>
-                        <h3 className="text-base font-bold text-white">PCM 音频提轨与频谱解析</h3>
+                        <span className="text-[10px] font-mono text-purple-600 dark:text-purple-400 uppercase tracking-widest">Step 01 — Focus</span>
+                        <h3 className="text-base font-bold text-slate-900 dark:text-white">PCM 音频提轨与频谱解析</h3>
                       </div>
                     </div>
-                    <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mb-6 leading-relaxed">
                       从原生 MP4 视频提取 16kHz 高保真单声道音频轨，消除环境噪音并对齐对白时间戳。
                     </p>
 
-                    {/* Audio Equalizer Waveform */}
-                    <div className="p-5 bg-slate-950/70 rounded-2xl border border-slate-800 flex flex-col items-center justify-center min-h-[140px] relative overflow-hidden">
+                    {/* 音频均衡器波形卡片 */}
+                    <div className="p-5 bg-white dark:bg-slate-950/80 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-xs flex flex-col items-center justify-center min-h-[140px] relative overflow-hidden">
                       <div className="flex items-end justify-center gap-1.5 h-16 mb-3">
                         {Array.from({ length: 15 }).map((_, i) => (
                           <div
                             key={i}
                             className={`w-2 rounded-full transition-all duration-300 ${
-                              step1Done ? 'bg-emerald-400 h-8' : 'bg-purple-500 animate-pulse'
+                              step1Done ? 'bg-emerald-500 dark:bg-emerald-400 h-8' : 'bg-purple-600 dark:bg-purple-500 animate-pulse'
                             }`}
                             style={{
                               height: step1Done
@@ -497,32 +552,32 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
                           />
                         ))}
                       </div>
-                      <span className="text-[11px] font-mono text-purple-300 flex items-center gap-1.5">
-                        <Volume2 className="w-3.5 h-3.5 text-purple-400 animate-bounce" />
+                      <span className="text-[11px] font-mono text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
+                        <Volume2 className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 animate-bounce" />
                         {step1Done ? 'PCM 单声道音轨解析完毕' : 'FFmpeg 音频提轨中 (Live PCM Stream)...'}
                       </span>
                     </div>
                   </div>
 
-                  {/* Audio Specs Metadata Chips */}
+                  {/* 音频规格元数据标签 */}
                   <div className="mt-6 space-y-2">
                     <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
-                      <div className="p-2.5 rounded-xl bg-slate-950/50 border border-slate-800/80">
-                        <span className="text-slate-500 block text-[10px]">采样率 / 声道</span>
-                        <span className="text-purple-300 font-bold">16,000 Hz / Mono</span>
+                      <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950/50 border border-slate-200/90 dark:border-slate-800/80 shadow-xs">
+                        <span className="text-slate-400 dark:text-slate-500 block text-[10px]">采样率 / 声道</span>
+                        <span className="text-purple-700 dark:text-purple-300 font-bold">16,000 Hz / Mono</span>
                       </div>
-                      <div className="p-2.5 rounded-xl bg-slate-950/50 border border-slate-800/80">
-                        <span className="text-slate-500 block text-[10px]">处理引擎</span>
-                        <span className="text-purple-300 font-bold">FFmpeg v6.1</span>
+                      <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950/50 border border-slate-200/90 dark:border-slate-800/80 shadow-xs">
+                        <span className="text-slate-400 dark:text-slate-500 block text-[10px]">处理引擎</span>
+                        <span className="text-purple-700 dark:text-purple-300 font-bold">FFmpeg v6.1</span>
                       </div>
                     </div>
 
-                    <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300 flex items-center justify-between">
+                    <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/20 text-xs text-purple-700 dark:text-purple-300 flex items-center justify-between">
                       <span className="flex items-center gap-1.5">
-                        <ShieldCheck className="w-4 h-4 text-purple-400" />
+                        <ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                         音轨提取状态
                       </span>
-                      <span className="font-mono font-bold text-emerald-400">
+                      <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
                         {step1Done ? '100% Ready' : `${status?.stage === 'extracting_audio' ? status.progress : 0}%`}
                       </span>
                     </div>
@@ -530,118 +585,145 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
                 </>
               )}
 
-              {/* Step 2 Visualizer: Subtitles & Gemini Typewriter */}
+              {/* 步骤 2 可视化器：字幕与 Gemini 打字机效果 */}
               {activeStep === 2 && (
                 <>
                   <div>
                     <div className="flex items-center gap-2.5 mb-4">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-400 flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-500/20 border border-indigo-200 dark:border-indigo-500/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
                         <Languages className="w-5 h-5" />
                       </div>
                       <div>
-                        <span className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest">Step 02 — Focus</span>
-                        <h3 className="text-base font-bold text-white">字幕识别与 {currentModelDisplayName} 润色</h3>
+                        <span className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 uppercase tracking-widest">Step 02 — Focus</span>
+                        <h3 className="text-base font-bold text-slate-900 dark:text-white">字幕识别与 {currentModelDisplayName} 润色</h3>
                       </div>
                     </div>
-                    <p className="text-xs text-slate-400 mb-5 leading-relaxed">
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mb-5 leading-relaxed">
                       必剪 ASR 对白精确断句 ➔ {currentModelDisplayName} 大模型结合上下文进行信达雅翻译润色。
                     </p>
 
-                    {/* Dual Subtitle Typewriter Card */}
-                    <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-3 relative">
+                    {/* 双字幕打字机卡片 */}
+                    <div className="p-4 bg-white dark:bg-slate-950/80 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-3 relative">
                       {liveSourceText ? (
                         <>
-                          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                            <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono mb-1">
+                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                            <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
                               <span>ORIGINAL SPEECH</span>
-                              <span className="text-purple-400">ASR Stream</span>
+                              <span className="text-purple-600 dark:text-purple-400">ASR Stream</span>
                             </div>
-                            <p className="text-xs text-slate-300 font-sans leading-relaxed">
+                            <p className="text-xs text-slate-800 dark:text-slate-300 font-sans leading-relaxed">
                               "{liveSourceText}"
                             </p>
                           </div>
 
                           <div className="flex items-center justify-center">
-                            <ArrowRight className="w-4 h-4 text-indigo-400 animate-pulse" />
+                            <ArrowRight className="w-4 h-4 text-indigo-500 animate-pulse" />
                           </div>
 
-                          <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-800/60">
-                            <div className="flex items-center justify-between text-[10px] text-indigo-400 font-mono mb-1">
+                          <div className="p-3 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/60">
+                            <div className="flex items-center justify-between text-[10px] text-indigo-600 dark:text-indigo-400 font-mono mb-1">
                               <span className="flex items-center gap-1">
                                 <Sparkles className="w-3 h-3" /> GEMINI AI TRANSLATION
                               </span>
-                              <span className="text-emerald-400">Live</span>
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">Live</span>
                             </div>
-                            <p className="text-xs text-white font-medium typing-text leading-relaxed">
+                            <p className="text-xs text-slate-900 dark:text-white font-medium leading-relaxed">
                               "{liveTransText || 'Gemini 翻译处理中...'}"
                             </p>
                           </div>
                         </>
                       ) : (
-                        <div className="py-8 flex flex-col items-center justify-center text-slate-500 text-xs gap-2">
-                          <Bot className="w-6 h-6 text-indigo-400 animate-bounce" />
+                        <div className="py-8 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 text-xs gap-2">
+                          <Bot className="w-6 h-6 text-indigo-500 animate-bounce" />
                           <span>{subCountMsg}</span>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Subtitle Progress Footer */}
+                  {/* 字幕进度底栏 */}
                   <div className="mt-6 space-y-2">
-                    <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
+                    <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 font-mono">
                       <span>已成功分词对白:</span>
-                      <strong className="text-indigo-400">{subtitles.length} 句</strong>
+                      <strong className="text-indigo-600 dark:text-indigo-400">{subtitles.length} 句</strong>
                     </div>
                     <Progress
                       value={step2Done ? 100 : status?.stage === 'translating' ? status.progress : 25}
-                      className="h-1.5 bg-slate-800 [&>div]:bg-indigo-500"
+                      className="h-1.5 bg-slate-200 dark:bg-slate-800 [&>div]:bg-indigo-600 dark:[&>div]:bg-indigo-500"
                     />
                   </div>
                 </>
               )}
 
-              {/* Step 3 Visualizer: MiMo Sound Synth Aura */}
+              {/* 步骤 3 可视化器：MiMo 合成光晕（实时同步区域） */}
               {activeStep === 3 && (
                 <>
                   <div>
                     <div className="flex items-center gap-2.5 mb-4">
-                      <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/40 text-blue-400 flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-500/20 border border-blue-200 dark:border-blue-500/40 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                         <Mic className="w-5 h-5" />
                       </div>
                       <div>
-                        <span className="text-[10px] font-mono text-blue-400 uppercase tracking-widest">Step 03 — Focus</span>
-                        <h3 className="text-base font-bold text-white">MiMo 音色克隆与多轨合成</h3>
+                        <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 uppercase tracking-widest">Step 03 — Focus</span>
+                        <h3 className="text-base font-bold text-slate-900 dark:text-white">MiMo 音色克隆与多轨合成</h3>
                       </div>
                     </div>
-                    <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mb-5 leading-relaxed">
                       基于原作者声音特征克隆 MiMo 声学模型，生成流畅自然的中配语音并与背景音乐混音。
                     </p>
 
-                    {/* Acoustic Soundwave Pulse Aura */}
-                    <div className="p-6 bg-slate-950/80 rounded-2xl border border-slate-800 flex flex-col items-center justify-center min-h-[150px] relative overflow-hidden">
-                      <div className="relative w-20 h-20 flex items-center justify-center mb-3">
+                    {/* 动态实时 TTS 进度卡片 */}
+                    <div className="p-5 bg-white dark:bg-slate-950/80 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-xs flex flex-col items-center justify-center min-h-[160px] relative overflow-hidden">
+                      {/* 脉冲光晕动画 */}
+                      <div className="relative w-16 h-16 flex items-center justify-center mb-3">
                         <div className="absolute inset-0 rounded-full bg-blue-500/20 animate-pulse-ring" />
                         <div className="absolute inset-2 rounded-full bg-purple-500/30 animate-ping" style={{ animationDuration: '3s' }} />
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center shadow-lg">
-                          <Bot className="w-6 h-6 text-white" />
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center shadow-md z-10">
+                          <Bot className="w-5 h-5 text-white" />
                         </div>
                       </div>
-                      <span className="text-xs font-mono text-blue-300 text-center truncate max-w-[240px]">
-                        {liveTtsMsg || 'MiMo Zero-Shot Acoustic Engine...'}
-                      </span>
+
+                      {/* 实时解析的分段计数器与进度条 */}
+                      {parsedTts ? (
+                        <div className="w-full text-center space-y-2 z-10">
+                          <div className="flex items-center justify-between text-xs font-mono">
+                            <span className="text-purple-600 dark:text-purple-400 font-bold bg-purple-50 dark:bg-purple-950/60 px-2 py-0.5 rounded border border-purple-200 dark:border-purple-800">
+                              语义段 [{parsedTts.current} / {parsedTts.total}]
+                            </span>
+                            <span className="text-slate-500 dark:text-slate-400 font-bold">
+                              {parsedTts.percent}%
+                            </span>
+                          </div>
+
+                          {parsedTts.text && (
+                            <p className="text-xs text-slate-800 dark:text-slate-200 font-sans italic truncate max-w-full px-1">
+                              "{parsedTts.text}"
+                            </p>
+                          )}
+
+                          <Progress
+                            value={parsedTts.percent}
+                            className="h-2 bg-slate-100 dark:bg-slate-800 [&>div]:bg-gradient-to-r [&>div]:from-purple-500 [&>div]:to-indigo-500 transition-all duration-500"
+                          />
+                        </div>
+                      ) : (
+                        <span className="text-xs font-mono text-blue-700 dark:text-blue-300 text-center truncate max-w-[260px] z-10">
+                          {liveTtsMsg || 'MiMo Zero-Shot Acoustic Engine...'}
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  {/* Multi-track Mix Status */}
+                  {/* 多轨混音状态 */}
                   <div className="mt-6 space-y-2">
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] font-mono space-y-1.5">
-                      <div className="flex items-center justify-between text-slate-400">
+                    <div className="p-3 rounded-xl bg-white dark:bg-slate-950/60 border border-slate-200/90 dark:border-slate-800 shadow-xs text-[11px] font-mono space-y-1.5">
+                      <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
                         <span>[Track 1] MiMo 中文克隆配音</span>
-                        <span className="text-emerald-400 font-bold">Active</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold">Active</span>
                       </div>
-                      <div className="flex items-center justify-between text-slate-400">
+                      <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
                         <span>[Track 2] 原声背景音乐 BGM</span>
-                        <span className="text-blue-400 font-bold">Ducked</span>
+                        <span className="text-blue-600 dark:text-blue-400 font-bold">Ducked</span>
                       </div>
                     </div>
                   </div>
@@ -650,24 +732,26 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
             </div>
           </div>
 
-          {/* Right Column (60% width - Pro Matrix Hacker Terminal UI) */}
-          <div className="md:col-span-7 bg-[#0B0F19] text-slate-200 font-mono flex flex-col justify-between border-t md:border-t-0 border-slate-800 relative">
-            {/* Terminal Header & Toolbar */}
-            <div className="bg-slate-950/90 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 text-xs">
+          {/* 右侧栏（60% 宽度 - 简洁的明暗开发者控制台界面） */}
+          <div className="md:col-span-7 bg-slate-50/90 dark:bg-[#0B0F19] text-slate-800 dark:text-slate-200 font-mono flex flex-col justify-between border-t md:border-t-0 border-slate-200/90 dark:border-slate-800 relative">
+            {/* 终端标题栏与工具栏 */}
+            <div className="bg-slate-100/90 dark:bg-slate-950/90 px-4 py-2.5 border-b border-slate-200/90 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-2">
-                <Terminal className="w-4 h-4 text-emerald-400" />
-                <span className="text-slate-300 font-bold tracking-wide">process.log</span>
-                <span className="text-[10px] text-slate-500 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800">
+                <Terminal className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-slate-800 dark:text-slate-300 font-bold tracking-wide">process.log</span>
+                <span className="text-[10px] text-slate-500 px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 font-medium">
                   {filteredLogs.length} events
                 </span>
               </div>
 
-              {/* Log Category Filter Tabs */}
+              {/* 日志分类筛选标签 */}
               <div className="flex items-center gap-1 text-[10px]">
                 <button
                   onClick={() => setLogFilter('all')}
                   className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                    logFilter === 'all' ? 'bg-purple-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                    logFilter === 'all'
+                      ? 'bg-purple-600 text-white font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800'
                   }`}
                 >
                   全部
@@ -675,7 +759,9 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
                 <button
                   onClick={() => setLogFilter('gemini')}
                   className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                    logFilter === 'gemini' ? 'bg-purple-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                    logFilter === 'gemini'
+                      ? 'bg-purple-600 text-white font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800'
                   }`}
                 >
                   Gemini
@@ -683,7 +769,9 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
                 <button
                   onClick={() => setLogFilter('tts')}
                   className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                    logFilter === 'tts' ? 'bg-purple-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                    logFilter === 'tts'
+                      ? 'bg-purple-600 text-white font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800'
                   }`}
                 >
                   MiMo
@@ -691,7 +779,9 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
                 <button
                   onClick={() => setLogFilter('ffmpeg')}
                   className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                    logFilter === 'ffmpeg' ? 'bg-purple-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                    logFilter === 'ffmpeg'
+                      ? 'bg-purple-600 text-white font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800'
                   }`}
                 >
                   FFmpeg
@@ -702,15 +792,15 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
                 <button
                   onClick={copyAllLogs}
                   title="复制终端日志"
-                  className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                  className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer"
                 >
-                  {copiedLog ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedLog ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>
 
-            {/* Terminal Body Content Area */}
-            <div className="flex-grow p-4 sm:p-5 overflow-y-auto max-h-[380px] min-h-[340px] space-y-2.5 text-xs select-text scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+            {/* 终端主体内容区 */}
+            <div ref={logsContainerRef} className="flex-grow p-4 sm:p-5 overflow-y-auto max-h-[380px] min-h-[340px] space-y-2.5 text-xs select-text scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-800 scrollbar-track-transparent">
               {filteredLogs.length > 0 ? (
                 filteredLogs.map((item, index) => {
                   const isSuccess = item.type === 'success' || item.message.includes('成功') || item.message.includes('✓')
@@ -718,34 +808,34 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
                   const isApi = item.type === 'api' || item.tag.includes('Gemini')
 
                   return (
-                    <div key={index} className="flex items-start gap-2.5 leading-relaxed hover:bg-slate-900/80 px-2 py-1.5 rounded-md transition-colors">
-                      <span className="text-slate-500 shrink-0 text-[11px] font-mono pt-0.5">[{item.timestamp}]</span>
+                    <div key={index} className="flex items-start gap-2.5 leading-relaxed hover:bg-slate-200/60 dark:hover:bg-slate-900/80 px-2 py-1.5 rounded-md transition-colors">
+                      <span className="text-slate-400 dark:text-slate-500 shrink-0 text-[11px] font-mono pt-0.5">[{item.timestamp}]</span>
 
-                      {/* Tag Badge */}
+                      {/* 标签徽章 */}
                       <span
                         className={`text-[10px] px-2 py-0.5 rounded font-medium shrink-0 border leading-tight ${
                           item.tag.includes('Gemini') || item.tag.includes('AI')
-                            ? 'bg-cyan-950/40 text-cyan-300 border-cyan-800/40'
+                            ? 'bg-cyan-100 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800/40'
                             : item.tag.includes('ASR') || item.tag.includes('字幕')
-                            ? 'bg-amber-950/40 text-amber-300 border-amber-800/40'
+                            ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800/40'
                             : item.tag.includes('TTS') || item.tag.includes('合成') || item.tag.includes('音色')
-                            ? 'bg-purple-950/40 text-purple-300 border-purple-800/40'
-                            : 'bg-blue-950/40 text-blue-300 border-blue-800/40'
+                            ? 'bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800/40'
+                            : 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800/40'
                         }`}
                       >
                         {item.tag}
                       </span>
 
-                      {/* Message Content */}
+                      {/* 消息内容 */}
                       <span
                         className={`break-all leading-relaxed ${
                           isSuccess
-                            ? 'text-[#6EE7B7] font-medium'
+                            ? 'text-emerald-700 dark:text-[#6EE7B7] font-semibold'
                             : isError
-                            ? 'text-rose-400 font-medium'
+                            ? 'text-rose-600 dark:text-rose-400 font-semibold'
                             : isApi
-                            ? 'text-indigo-300/90'
-                            : 'text-slate-300/90'
+                            ? 'text-indigo-700 dark:text-indigo-300'
+                            : 'text-slate-700 dark:text-slate-300'
                         }`}
                       >
                         {item.message}
@@ -754,26 +844,22 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
                   )
                 })
               ) : (
-                <div className="py-12 flex flex-col items-center justify-center text-slate-600 text-xs gap-2">
+                <div className="py-12 flex flex-col items-center justify-center text-slate-400 dark:text-slate-600 text-xs gap-2">
                   <Terminal className="w-8 h-8 opacity-40 animate-pulse" />
                   <span>等待服务器推播实时处理日志...</span>
                 </div>
               )}
-              <div ref={logsEndRef} />
             </div>
 
-            {/* Bottom Dark Fade-out Gradient Overlay */}
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#0B0F19] to-transparent" />
-
-            {/* Terminal Footer Bar */}
-            <div className="bg-slate-950 px-4 py-2 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
+            {/* 终端底栏 */}
+            <div className="bg-slate-100/90 dark:bg-slate-950 px-4 py-2 border-t border-slate-200/90 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
                 <span>Status: Socket Stream Active</span>
               </div>
               <button
                 onClick={() => setAutoScrollLogs(!autoScrollLogs)}
-                className={`hover:underline cursor-pointer ${autoScrollLogs ? 'text-purple-400' : 'text-slate-500'}`}
+                className={`hover:underline cursor-pointer ${autoScrollLogs ? 'text-purple-600 dark:text-purple-400 font-bold' : 'text-slate-500'}`}
               >
                 Auto-scroll: {autoScrollLogs ? 'ON' : 'OFF'}
               </button>
@@ -782,7 +868,7 @@ export default function ProcessingState({ taskId, onComplete }: ProcessingStateP
         </div>
       </div>
 
-      {/* Task Detail Modal Drawer */}
+      {/* 任务详情模态抽屉 */}
       <TaskDetailDrawer
         taskId={taskId}
         isOpen={showLogDrawer}

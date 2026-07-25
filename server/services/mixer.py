@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-from .audio import run_ffmpeg
+from .audio import has_audio_stream, probe_duration, run_ffmpeg
 from ..config import SUBTITLE_FONT
 
 
@@ -19,14 +19,14 @@ def _ass_timestamp(seconds: float) -> str:
 
 
 def _single_line_text(value: object) -> str:
-    """Return plain ASS-safe text that libass cannot wrap onto a second line."""
+    """返回 libass 无法自动换行的纯文本安全 ASS 字幕内容。"""
     text = re.sub(r"\s+", " ", str(value or "")).strip()
-    # Braces and backslashes have control meaning in ASS dialogue text.
+    # 花括号和反斜杠在 ASS 对话文本中具有控制含义。
     return text.replace("\\", "＼").replace("{", "｛").replace("}", "｝")
 
 
 def _line_units(text: str) -> float:
-    """Estimate rendered width; CJK glyphs are roughly twice an ASCII glyph."""
+    """估算渲染宽度；CJK 字符宽度约为 ASCII 字符的两倍。"""
     return sum(1.0 if ord(char) > 127 else 0.55 for char in text)
 
 
@@ -36,9 +36,9 @@ def _subtitle_font_size(text: str) -> int:
     return max(ASS_MIN_FONT_SIZE, fitted)
 
 
-def write_ass_subtitles(task_dir: Path, segments: list[dict]) -> Path:
-    """Create a bottom-aligned, single-line Chinese ASS subtitle file."""
-    out_path = task_dir / "subtitles_zh.ass"
+def write_ass_subtitles(task_dir: Path, segments: list[dict], out_name: str = "subtitles_zh.ass") -> Path:
+    """创建底部对齐的单行中文 ASS 字幕文件。"""
+    out_path = task_dir / out_name
     header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
@@ -63,7 +63,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         start = float(segment.get("start", 0.0))
         end = max(start + 0.05, float(segment.get("end", start + 0.05)))
         font_size = _subtitle_font_size(text)
-        # \q2 disables automatic wrapping. Long captions are shrunk per cue.
+        # \q2 禁用自动换行。长字幕会按每条字幕单独缩小。
         events.append(
             f"Dialogue: 0,{_ass_timestamp(start)},{_ass_timestamp(end)},Chinese,,0,0,0,,"
             f"{{\\q2\\fs{font_size}}}{text}"
@@ -73,35 +73,132 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def _escape_filter_path(path: Path) -> str:
-    """Escape a filename used inside an FFmpeg filter argument."""
+    """转义 FFmpeg 滤镜参数中使用的文件名。"""
     value = str(path.resolve()).replace("\\", "\\\\")
     for char in (":", "'", ",", "[", "]"):
         value = value.replace(char, f"\\{char}")
     return value
 
 
+def _escape_concat_path(path: Path) -> str:
+    """为 concat demuxer 生成安全路径（正斜杠 + 单引号转义）。"""
+    value = path.resolve().as_posix().replace("'", r"'\''")
+    return value
+
+
+def _mix_filter_complex(
+    *,
+    duration: float | None,
+    has_source_audio: bool,
+    video_input_index: int = 0,
+    dub_input_index: int = 1,
+) -> str:
+    """构建背景音 + 配音混音滤镜；无片源音轨时用静音占位。"""
+    dur = max(0.1, float(duration)) if duration is not None else None
+    pad_trim = ""
+    if dur is not None:
+        # 配音短于时间窗时补齐静音，避免输出被短音轨截断。
+        pad_trim = f",apad=whole_dur={dur:.3f},atrim=0:{dur:.3f},asetpts=PTS-STARTPTS"
+
+    dub = (
+        f"[{dub_input_index}:a]aformat=sample_rates=44100:channel_layouts=stereo"
+        f"{pad_trim}[dub]"
+    )
+
+    if has_source_audio:
+        bg = (
+            f"[{video_input_index}:a]aformat=sample_rates=44100:channel_layouts=stereo,"
+            f"volume=0.2{pad_trim}[bg]"
+        )
+    elif dur is not None:
+        bg = (
+            f"anullsrc=channel_layout=stereo:sample_rate=44100:duration={dur:.3f}[bg_raw];"
+            f"[bg_raw]aformat=sample_rates=44100:channel_layouts=stereo,volume=0.2{pad_trim}[bg]"
+        )
+    else:
+        # 无法得知片长时，仅输出配音轨。
+        return (
+            f"[{dub_input_index}:a]aformat=sample_rates=44100:channel_layouts=stereo"
+            f"{pad_trim}[a]"
+        )
+
+    # duration=first：以已对齐到窗口长度的背景轨为准。
+    mix = "[bg][dub]amix=inputs=2:duration=first:normalize=0[a]"
+    return ";".join([bg, dub, mix])
+
+
 async def merge(task_dir: Path, video_path: Path, segments: list[dict]) -> Path:
-    """Combine video/audio and burn the translated subtitles into the picture."""
+    """合并视频与音频，并将翻译字幕压制到画面中。"""
     dubbed_audio = task_dir / "dubbed_audio.wav"
     out_path = task_dir / "final.mp4"
     subtitle_path = write_ass_subtitles(task_dir, segments)
+    has_audio = await has_audio_stream(video_path)
+    # 无片源音轨时需要明确静音时长，避免 anullsrc 无限延长。
+    pad_duration = None if has_audio else (await probe_duration(video_path) or None)
+    filter_complex = _mix_filter_complex(duration=pad_duration, has_source_audio=has_audio)
 
-    # Normalize both audio inputs to a common rate/layout so amix accepts them.
-    filter_complex = (
-        "[0:a]aformat=sample_rates=44100:channel_layouts=stereo,volume=0.2[bg];"
-        "[1:a]aformat=sample_rates=44100:channel_layouts=stereo[dub];"
-        "[bg][dub]amix=inputs=2:duration=first:normalize=0[a]"
-    )
     await run_ffmpeg([
         "-i", str(video_path),
         "-i", str(dubbed_audio),
         "-filter_complex", filter_complex,
         "-map", "0:v", "-map", "[a]",
         "-vf", f"ass=filename='{_escape_filter_path(subtitle_path)}'",
-        # Subtitle burn-in requires video re-encoding; keep the original pixel
-        # format broadly compatible with browsers and common players.
+        # 字幕压制需要重新编码视频；保持像素格式以兼容浏览器和常见播放器。
         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart",
+        # 成片以视频长度为准；配音不足时已在滤镜中 apad。
+        "-shortest",
+        str(out_path), "-y",
+    ])
+    return out_path
+
+
+async def merge_chunk(
+    task_dir: Path,
+    video_path: Path,
+    rel_segments: list[dict],
+    start: float,
+    duration: float,
+    index: int,
+) -> Path:
+    """将一个连续时间窗 [start, start+duration] 渲染为独立、自包含的 MP4 chunk。
+
+    ``rel_segments`` 必须已完成时间偏移，使窗口从 0 开始（即每段的 start/end
+    均已减去 ``start``）。``<task>/dub_XXX.wav`` 必须存在，并与相同的 0 基窗口对齐。
+    """
+    dubbed_audio = task_dir / f"dub_{index:03d}.wav"
+    out_path = task_dir / f"chunk_{index:03d}.mp4"
+    subtitle_path = write_ass_subtitles(task_dir, rel_segments, out_name=f"chunk_{index:03d}.ass")
+    window = max(0.1, float(duration))
+    has_audio = await has_audio_stream(video_path)
+    filter_complex = _mix_filter_complex(duration=window, has_source_audio=has_audio)
+
+    await run_ffmpeg([
+        "-ss", f"{start:.3f}", "-i", str(video_path),
+        "-i", str(dubbed_audio),
+        "-t", f"{window:.3f}",
+        "-filter_complex", filter_complex,
+        "-map", "0:v", "-map", "[a]",
+        "-vf", f"ass=filename='{_escape_filter_path(subtitle_path)}'",
+        # 各 chunk 必须使用相同的编解码参数，才能无需重新编码直接拼接到 final.mp4。
+        # 不用 -shortest：由 -t + apad/atrim 保证输出时长等于时间窗。
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "44100",
+        "-movflags", "+faststart",
+        str(out_path), "-y",
+    ])
+    return out_path
+
+
+async def concat_chunks(task_dir: Path, chunk_paths: list[Path]) -> Path:
+    """无损拼接已渲染的 chunk，生成最终可下载视频。"""
+    out_path = task_dir / "final.mp4"
+    list_file = task_dir / "chunks_concat.txt"
+    lines = [f"file '{_escape_concat_path(p)}'" for p in chunk_paths if p.exists()]
+    list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    await run_ffmpeg([
+        "-f", "concat", "-safe", "0", "-i", str(list_file),
+        "-c", "copy", "-movflags", "+faststart",
         str(out_path), "-y",
     ])
     return out_path

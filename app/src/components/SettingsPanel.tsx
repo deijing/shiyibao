@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Settings, Eye, EyeOff, Sliders, KeyRound, Mic, Zap, CheckCircle2, AlertCircle, Loader2, ExternalLink, Sparkles } from 'lucide-react'
+import { Settings, Eye, EyeOff, Sliders, KeyRound, Mic, Zap, CheckCircle2, AlertCircle, Loader2, ExternalLink, RefreshCcw, Languages, Shield, ShieldCheck } from 'lucide-react'
+import { GithubIcon } from './GithubIcon'
+import { ChangelogModal } from './ChangelogModal'
+import { EnvironmentCheckModal } from './EnvironmentCheckModal'
 import {
   Dialog,
   DialogContent,
@@ -32,6 +35,7 @@ export interface AppSettings {
   mimoVoice: string
   sourceLang: string
   targetLang: string
+  streamMode?: 'streaming' | 'batch'
   customGeminiModels?: { id: string; name: string }[]
 }
 
@@ -99,7 +103,7 @@ export function getGeminiModelDisplayName(modelId?: string): string {
   if (modelId === 'gemini-1.5-flash') return 'Gemini 1.5 Flash'
   if (modelId === 'gemini-1.5-pro') return 'Gemini 1.5 Pro'
 
-  // Standardize raw string formatting
+  // 标准化原始字符串格式
   return modelId
     .split('/')
     .pop()!
@@ -114,6 +118,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   mimoVoice: '冰糖',
   sourceLang: 'auto',
   targetLang: 'zh',
+  streamMode: 'streaming',
   customGeminiModels: [],
 }
 
@@ -121,7 +126,7 @@ export function loadSettings(): AppSettings {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }
-  } catch { /* ignore */ }
+  } catch { /* 忽略 */ }
   return DEFAULT_SETTINGS
 }
 
@@ -133,7 +138,33 @@ export function saveSettings(settings: AppSettings) {
   }
 }
 
+/**
+ * 用服务端保存的配置填充本地空字段，避免覆盖用户已有的本地值。
+ * `loadSettings()` 始终返回完整对象（未设置的键为空字符串），因此无论哪个方向
+ * 的直接展开合并都不正确——仅当本地值为空或缺失时才复制服务端值。
+ */
+export function mergeFillEmpty(
+  local: AppSettings,
+  server: Record<string, any>,
+): AppSettings {
+  const merged: Record<string, any> = { ...local }
+  for (const key of Object.keys(server)) {
+    const serverVal = server[key]
+    const localVal = merged[key]
+    const localEmpty =
+      localVal === undefined ||
+      localVal === null ||
+      localVal === '' ||
+      (Array.isArray(localVal) && localVal.length === 0)
+    if (serverVal !== undefined && serverVal !== null && serverVal !== '' && localEmpty) {
+      merged[key] = serverVal
+    }
+  }
+  return merged as AppSettings
+}
+
 export default function SettingsPanel() {
+  const [open, setOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const [showGeminiKey, setShowGeminiKey] = useState(false)
   const [showXiaomiKey, setShowXiaomiKey] = useState(false)
@@ -174,9 +205,7 @@ export default function SettingsPanel() {
     })
   }, [])
 
-  useEffect(() => {
-    saveSettings(settings)
-  }, [settings])
+
 
   async function handleTestGemini() {
     setTestingGemini(true)
@@ -260,27 +289,54 @@ export default function SettingsPanel() {
     }
   }
 
+  // 仅在明确点击“保存偏好设置”时持久化配置。每次打开对话框时重新加载已保存的
+  // 值，确保点击“取消”或关闭时会真正丢弃未保存的草稿修改（面板在整个应用周期内保持挂载）。
+  function handleOpenChange(next: boolean) {
+    setOpen(next)
+    if (next) {
+      setSettings(loadSettings())
+      setGeminiResult(null)
+      setXiaomiResult(null)
+      setGeminiVerified(false)
+      setXiaomiVerified(false)
+    }
+  }
+
   return (
-    <Dialog>
-      <DialogTrigger>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger render={
         <Button variant="ghost" size="icon" className="rounded-xl border-0 bg-slate-100/80 dark:bg-slate-800/80 hover:bg-slate-200/80 dark:hover:bg-slate-700/80 transition-all duration-200">
           <Settings className="w-4 h-4 text-slate-600 dark:text-slate-300 stroke-[1.5]" />
         </Button>
-      </DialogTrigger>
+      } />
 
-      <DialogContent className="sm:max-w-3xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-3xl p-7 shadow-2xl shadow-slate-950/10 relative">
-        <DialogHeader className="flex flex-row items-center gap-3 pb-4 border-b border-slate-100 dark:border-slate-800/60">
-          <div className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0">
-            <Sliders className="w-5 h-5 text-slate-700 dark:text-slate-300 stroke-[1.5]" />
+      <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-3xl p-7 shadow-2xl shadow-slate-950/10 relative">
+        <DialogHeader className="flex flex-row items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/60">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0">
+              <Sliders className="w-5 h-5 text-slate-700 dark:text-slate-300 stroke-[1.5]" />
+            </div>
+            <div>
+              <DialogTitle className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                系统偏好设置
+              </DialogTitle>
+              <DialogDescription className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-normal">
+                配置 API 密钥、选择翻译模型与默认声音偏好
+              </DialogDescription>
+            </div>
           </div>
-          <div>
-            <DialogTitle className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-              系统偏好设置
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-normal">
-              配置 API 密钥、选择翻译模型与默认声音偏好
-            </DialogDescription>
-          </div>
+          <EnvironmentCheckModal
+            trigger={
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-xl text-xs gap-1.5 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 stroke-[1.5]" />
+                <span>环境诊断</span>
+              </Button>
+            }
+          />
         </DialogHeader>
 
         <div className="space-y-6 py-2">
@@ -294,7 +350,7 @@ export default function SettingsPanel() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Gemini Key 面板 */}
+              {/* Gemini 密钥面板 */}
               <div className="p-4 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 space-y-3 flex flex-col justify-between transition-all">
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -360,7 +416,7 @@ export default function SettingsPanel() {
                           </>
                         ) : (
                           <>
-                            <Sparkles className="w-3 h-3 mr-1 text-slate-500 stroke-[1.5]" />
+                            <RefreshCcw className="w-3 h-3 mr-1 text-slate-500 stroke-[1.5]" />
                             拉取模型
                           </>
                         )}
@@ -404,7 +460,7 @@ export default function SettingsPanel() {
                 </div>
               </div>
 
-              {/* 小米 TTS Key 面板 */}
+              {/* 小米 TTS 密钥面板 */}
               <div className="p-4 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 space-y-3 flex flex-col justify-between transition-all">
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -501,7 +557,7 @@ export default function SettingsPanel() {
             {/* 行一：Gemini 翻译模型 */}
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-3.5 h-3.5 text-slate-400 stroke-[1.5]" />
+                <Languages className="w-3.5 h-3.5 text-slate-400 stroke-[1.5]" />
                 <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                   AI 翻译模型偏好
                 </h3>
@@ -603,24 +659,118 @@ export default function SettingsPanel() {
                 </div>
               </div>
             </div>
+
+            {/* 行三：视频转译与播放体验模式 */}
+            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
+              <div className="flex items-center gap-2">
+                <Zap className="w-3.5 h-3.5 text-purple-500 stroke-[1.5]" />
+                <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  视频转译与播放体验模式 (Playback Engine)
+                </h3>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* 模式一：极速流式秒开 */}
+                <div
+                  role="radio"
+                  tabIndex={0}
+                  aria-checked={(settings.streamMode || 'streaming') === 'streaming'}
+                  onClick={() => setSettings(s => ({ ...s, streamMode: 'streaming' }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setSettings(s => ({ ...s, streamMode: 'streaming' }))
+                    }
+                  }}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between outline-none focus-visible:ring-2 focus-visible:ring-purple-500/50 ${
+                    (settings.streamMode || 'streaming') === 'streaming'
+                      ? 'bg-purple-50/70 dark:bg-purple-950/40 border-purple-500/80 shadow-xs ring-1 ring-purple-500/30'
+                      : 'bg-slate-50/50 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-700/60 hover:bg-slate-100/70'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                        <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500/20 shrink-0" />
+                        <span>极速流式秒开 (边缓存边看)</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
+                        推荐
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      任务启动 5~10 秒内优先生成首段切片即刻秒开开播，后台如腾讯视频/爱奇艺般实时无感增量缓冲全片。
+                    </p>
+                  </div>
+                </div>
+
+                {/* 模式二：全量沉浸渲染 */}
+                <div
+                  role="radio"
+                  tabIndex={0}
+                  aria-checked={settings.streamMode === 'batch'}
+                  onClick={() => setSettings(s => ({ ...s, streamMode: 'batch' }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setSettings(s => ({ ...s, streamMode: 'batch' }))
+                    }
+                  }}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between outline-none focus-visible:ring-2 focus-visible:ring-purple-500/50 ${
+                    settings.streamMode === 'batch'
+                      ? 'bg-purple-50/70 dark:bg-purple-950/40 border-purple-500/80 shadow-xs ring-1 ring-purple-500/30'
+                      : 'bg-slate-50/50 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-700/60 hover:bg-slate-100/70'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                        <Shield className="w-3.5 h-3.5 text-blue-500 fill-blue-500/20 dark:text-blue-400 shrink-0" />
+                        <span>全量沉浸渲染 (处理完再看)</span>
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      静默等待后台将全片字幕、配音与画质 100% 完全合成完毕后再开启播放，适合长视频离线导出与静默归档。
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
         {/* 底部保存操作栏 */}
-        <div className="pt-4 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-end gap-2.5">
-          <DialogClose render={
-            <Button variant="ghost" className="h-10 px-5 rounded-xl bg-slate-100/80 dark:bg-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium transition-all">
-              取消
-            </Button>
-          } />
-          <DialogClose render={
-            <Button
-              onClick={() => saveSettings(settings)}
-              className="h-10 px-7 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white text-xs font-medium transition-all shadow-sm shadow-slate-900/10"
+        <div className="pt-4 border-t border-slate-100 dark:border-slate-800/60 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <a
+              href="https://github.com/deijing/shiyibao"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-xs font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
             >
-              保存偏好设置
-            </Button>
-          } />
+              <GithubIcon className="w-4 h-4 text-slate-700 dark:text-slate-300" />
+              <span>GitHub 开源仓库</span>
+              <ExternalLink className="w-3.5 h-3.5 opacity-60" />
+            </a>
+            <span className="text-slate-300 dark:text-slate-700">|</span>
+            <ChangelogModal />
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <DialogClose render={
+              <Button variant="ghost" className="h-10 px-5 rounded-xl bg-slate-100/80 dark:bg-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium transition-all">
+                取消
+              </Button>
+            } />
+            <DialogClose render={
+              <Button
+                onClick={() => saveSettings(settings)}
+                className="h-10 px-7 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white text-xs font-medium transition-all shadow-sm shadow-slate-900/10"
+              >
+                保存偏好设置
+              </Button>
+            } />
+          </div>
         </div>
       </DialogContent>
     </Dialog>

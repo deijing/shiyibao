@@ -3,9 +3,9 @@ import {
   Clock, FileVideo, CheckCircle2, XCircle, Loader2,
   ArrowRight, Inbox, RefreshCw, RotateCcw, Trash2,
   HelpCircle, Languages, Mic, Filter, KeyRound,
-  AlertCircle, Terminal
+  AlertCircle, Terminal, Play, ListChecks, Check
 } from 'lucide-react'
-import { getTaskList, deleteTask, startTask, type TaskListItem } from '@/lib/api'
+import { getTaskList, deleteTask, startTask, getThumbnailUrl, type TaskListItem } from '@/lib/api'
 import { loadSettings, saveSettings } from './SettingsPanel'
 import TaskDetailDrawer from './TaskDetailDrawer'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,33 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+
+function TaskVideoThumbnail({ taskId, alt }: { taskId: string; alt?: string }) {
+  const [hasError, setHasError] = useState(false)
+  const thumbnailUrl = getThumbnailUrl(taskId)
+
+  if (hasError) {
+    return (
+      <div className="w-24 sm:w-28 aspect-video rounded-xl bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/60 dark:to-purple-950/60 border border-indigo-100 dark:border-indigo-900/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 shadow-2xs group-hover:scale-105 transition-transform mt-0.5">
+        <FileVideo className="w-6 h-6" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative w-24 sm:w-28 aspect-video rounded-xl overflow-hidden border border-slate-200/80 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 shrink-0 shadow-xs group-hover:scale-105 transition-transform mt-0.5">
+      <img
+        src={thumbnailUrl}
+        alt={alt || '视频封面'}
+        onError={() => setHasError(true)}
+        className="w-full h-full object-cover"
+      />
+      <div className="absolute inset-0 bg-slate-900/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+        <Play className="w-4 h-4 text-white fill-white drop-shadow-xs" />
+      </div>
+    </div>
+  )
+}
 
 const LANG_LABELS: Record<string, string> = {
   zh: '中文',
@@ -158,12 +185,16 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
   const [hoveredRawErrorId, setHoveredRawErrorId] = useState<string | null>(null)
   const [detailDrawerTaskId, setDetailDrawerTaskId] = useState<string | null>(null)
 
-  // Action States
+  // 操作状态
   const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null)
-  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null)
-  const [taskToDelete, setTaskToDelete] = useState<TaskListItem | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [tasksToDelete, setTasksToDelete] = useState<TaskListItem[]>([])
 
-  // API Key Prompt Dialog for Retry
+  // 批量选择状态
+  const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
+
+  // 重试时的 API Key 提示框
   const [showKeyDialog, setShowKeyDialog] = useState(false)
   const [keyInput, setKeyInput] = useState('')
   const [pendingRetryTask, setPendingRetryTask] = useState<TaskListItem | null>(null)
@@ -198,7 +229,7 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
         voice: task.voice || settings.mimoVoice || '冰糖',
         target_lang: task.target_lang || settings.targetLang || 'zh',
       })
-      // Local optimistic update
+      // 本地乐观更新
       setTasks((prev) =>
         prev.map((t) =>
           t.task_id === task.task_id
@@ -240,22 +271,25 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
   }
 
   const confirmDelete = async () => {
-    if (!taskToDelete) return
-    const id = taskToDelete.task_id
-    setDeletingTaskId(id)
+    if (tasksToDelete.length === 0) return
+    setIsDeleting(true)
     try {
-      await deleteTask(id)
-      setTasks((prev) => prev.filter((t) => t.task_id !== id))
-      onTaskDeleted(id)
-      setTaskToDelete(null)
+      await Promise.all(tasksToDelete.map(t => deleteTask(t.task_id)))
+      const deletedIds = new Set(tasksToDelete.map(t => t.task_id))
+      setTasks((prev) => prev.filter((t) => !deletedIds.has(t.task_id)))
+      tasksToDelete.forEach(t => onTaskDeleted(t.task_id))
+      setTasksToDelete([])
+      setSelectedTaskIds(new Set())
+      setIsSelectionMode(false)
     } catch (err) {
-      alert(`删除任务失败: ${err instanceof Error ? err.message : '请重试'}`)
+      alert(`删除任务失败: ${err instanceof Error ? err.message : '部分任务删除失败，请重试'}`)
+      loadTasks(false)
     } finally {
-      setDeletingTaskId(null)
+      setIsDeleting(false)
     }
   }
 
-  // Filter tasks
+  // 筛选任务
   const filteredTasks = tasks.filter((t) => {
     if (filter === 'complete') return t.stage === 'complete'
     if (filter === 'error') return t.stage === 'error'
@@ -271,9 +305,9 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
   }
 
   return (
-    <div className="flex-grow flex flex-col w-full bg-slate-50/70 dark:bg-slate-950/50 py-8 px-4 sm:px-6">
-      <div className="max-w-5xl mx-auto w-full flex flex-col flex-grow">
-        {/* Header Section */}
+    <div className="flex-grow flex flex-col w-full bg-slate-50/70 dark:bg-slate-950/50 py-6 sm:py-8 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-6xl 2xl:max-w-7xl mx-auto w-full flex flex-col flex-grow">
+        {/* 标题区域 */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-7">
           <div>
             <div className="flex items-center gap-4">
@@ -292,18 +326,64 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
           </div>
 
           <div className="flex items-center gap-3">
+            {isSelectionMode && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (selectedTaskIds.size === filteredTasks.length && filteredTasks.length > 0) {
+                      setSelectedTaskIds(new Set())
+                    } else {
+                      setSelectedTaskIds(new Set(filteredTasks.map(t => t.task_id)))
+                    }
+                  }}
+                  className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xs hover:shadow-sm rounded-xl px-3.5 py-2 cursor-pointer transition-all"
+                >
+                  {selectedTaskIds.size === filteredTasks.length && filteredTasks.length > 0 ? '取消全选' : '全选'}
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={selectedTaskIds.size === 0}
+                  onClick={() => {
+                    const selected = tasks.filter((t) => selectedTaskIds.has(t.task_id));
+                    setTasksToDelete(selected);
+                  }}
+                  className="flex items-center gap-2 text-xs font-medium bg-rose-600 hover:bg-rose-700 text-white shadow-xs hover:shadow-sm rounded-xl px-3.5 py-2 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  删除所选
+                </Button>
+              </>
+            )}
             <Button
               variant="outline"
-              onClick={() => loadTasks()}
-              className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xs hover:shadow-sm rounded-xl px-3.5 py-2 cursor-pointer transition-all"
+              onClick={() => {
+                setIsSelectionMode(!isSelectionMode);
+                if (isSelectionMode) setSelectedTaskIds(new Set());
+              }}
+              className={`flex items-center gap-2 text-xs font-medium shadow-xs hover:shadow-sm rounded-xl px-3.5 py-2 cursor-pointer transition-all ${
+                isSelectionMode
+                  ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 border-indigo-200 dark:border-indigo-800'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+              }`}
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
-              刷新列表
+              <ListChecks className="w-3.5 h-3.5" />
+              {isSelectionMode ? '退出选择' : '批量操作'}
             </Button>
+            {!isSelectionMode && (
+              <Button
+                variant="outline"
+                onClick={() => loadTasks()}
+                className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xs hover:shadow-sm rounded-xl px-3.5 py-2 cursor-pointer transition-all"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
+                刷新列表
+              </Button>
+            )}
           </div>
         </div>
 
-        {/* Filter Navigation Tabs */}
+        {/* 筛选导航标签 */}
         <div className="grid grid-cols-4 gap-1.5 p-1.5 bg-slate-200/60 dark:bg-slate-900/80 rounded-2xl mb-6 w-full max-w-2xl border border-slate-200/80 dark:border-slate-800/80">
             <button
               onClick={() => setFilter('all')}
@@ -354,7 +434,7 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
           </div>
         )}
 
-        {/* Task Cards Area */}
+        {/* 任务卡片区域 */}
         {loading && tasks.length === 0 ? (
           <div className="flex-grow flex flex-col items-center justify-center py-20 text-slate-400 dark:text-slate-500 gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
@@ -391,27 +471,55 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
               const { friendlyMsg, rawError } = isError ? humanizeErrorMessage(task.error) : { friendlyMsg: '', rawError: null }
               const timeDisplay = formatTaskTime(task.created_at)
 
+              const isSelected = selectedTaskIds.has(task.task_id)
+
               return (
                 <div
                   key={task.task_id}
-                  className={`group bg-white dark:bg-slate-900/90 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700 transition-all duration-200 p-4 sm:p-5 relative ${
-                    isComplete ? 'hover:border-indigo-500/40 dark:hover:border-indigo-500/40' : ''
+                  onClick={() => {
+                    if (isSelectionMode) {
+                      const newSet = new Set(selectedTaskIds);
+                      if (isSelected) newSet.delete(task.task_id);
+                      else newSet.add(task.task_id);
+                      setSelectedTaskIds(newSet);
+                    }
+                  }}
+                  className={`group bg-white dark:bg-slate-900/90 rounded-2xl border transition-all duration-200 p-4 sm:p-5 relative ${
+                    isSelectionMode ? 'cursor-pointer' : ''
+                  } ${
+                    isSelected
+                      ? 'border-indigo-500 bg-indigo-50/40 dark:bg-indigo-900/20 ring-1 ring-indigo-500 shadow-sm'
+                      : 'border-slate-200/80 dark:border-slate-800 shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700 ' + (isComplete ? 'hover:border-indigo-500/40 dark:hover:border-indigo-500/40' : '')
                   }`}
                 >
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    {/* Left Section: Video Info & Metadata */}
+                    {/* 左侧区域：视频信息与元数据 */}
                     <div className="flex items-start gap-3.5 min-w-0 flex-grow">
-                      <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/60 dark:to-purple-950/60 border border-indigo-100 dark:border-indigo-900/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 shadow-2xs group-hover:scale-105 transition-transform mt-0.5">
-                        <FileVideo className="w-5 h-5 sm:w-6 sm:h-6" />
-                      </div>
+                      {isSelectionMode && (
+                        <div className="self-center pr-1 sm:pr-2 shrink-0">
+                          <div 
+                            className={`w-5 h-5 flex items-center justify-center rounded-md border transition-all shadow-sm ${
+                              isSelected 
+                                ? 'bg-indigo-600 border-indigo-600 text-white' 
+                                : 'bg-white border-slate-300 dark:bg-slate-800 dark:border-slate-600 group-hover:border-indigo-400'
+                            }`}
+                          >
+                            {isSelected && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
+                          </div>
+                        </div>
+                      )}
+                      <TaskVideoThumbnail taskId={task.task_id} alt={task.filename} />
 
                       <div className="flex-grow min-w-0">
-                        {/* Title & Status Badge Header */}
+                        {/* 标题与状态徽标头部 */}
                         <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                           <h3
-                            onClick={() => !isError && onOpenTask(task.task_id, task.stage)}
+                            onClick={() => {
+                              if (isSelectionMode) return;
+                              if (!isError) onOpenTask(task.task_id, task.stage);
+                            }}
                             className={`font-semibold text-slate-900 dark:text-slate-100 text-sm sm:text-base leading-snug truncate max-w-md ${
-                              !isError ? 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors' : ''
+                              !isError && !isSelectionMode ? 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors' : ''
                             }`}
                             title={task.filename}
                           >
@@ -420,11 +528,11 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
 
                           <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full font-medium shrink-0 border ${cfg.bg} ${cfg.color} ${cfg.border}`}>
                             <StatusIcon className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
-                            {cfg.label}
+                            {isProcessing ? `处理中 (${task.progress}%)` : cfg.label}
                           </span>
                         </div>
 
-                        {/* Metadata Tags */}
+                        {/* 元数据标签 */}
                         <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
                           <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400">
                             <Clock className="w-3 h-3 opacity-70" />
@@ -452,7 +560,7 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                           )}
                         </div>
 
-                        {/* Humanized Error Explanation Box */}
+                        {/* 易读错误说明框 */}
                         {isError && (
                           <div className="mt-2.5 rounded-xl bg-rose-50/90 dark:bg-rose-950/40 border border-rose-200/80 dark:border-rose-900/60 p-2.5 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 max-w-xl">
                             <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
@@ -460,7 +568,7 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                               <p className="font-medium leading-relaxed">{friendlyMsg}</p>
                             </div>
 
-                            {/* Technical Details Popover / Tooltip Icon */}
+                            {/* 技术详情浮层提示图标 */}
                             {rawError && (
                               <div className="relative shrink-0">
                                 <button
@@ -493,7 +601,7 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                           </div>
                         )}
 
-                        {/* Processing Status & Message */}
+                        {/* 处理状态与消息 */}
                         {isProcessing && (
                           <div className="mt-2 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping shrink-0" />
@@ -503,7 +611,7 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                       </div>
                     </div>
 
-                    {/* Right Section: Progress & Action Buttons */}
+                    {/* 右侧区域：进度与操作按钮 */}
                     <div className="flex items-center gap-3 shrink-0 self-end md:self-center pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-800 w-full md:w-auto justify-end">
                       {isProcessing && (
                         <div className="w-24 sm:w-28 mr-2 hidden sm:block">
@@ -516,7 +624,7 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                         </div>
                       )}
 
-                      {/* Action Closed Loop Buttons */}
+                      {/* 操作闭环按钮 */}
                       <Button
                         size="sm"
                         variant="outline"
@@ -533,7 +641,7 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                       {isComplete && (
                         <Button
                           size="sm"
-                          onClick={() => onOpenTask(task.task_id, task.stage)}
+                          onClick={(e) => { e.stopPropagation(); onOpenTask(task.task_id, task.stage); }}
                           className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs hover:shadow-indigo-500/20 text-xs font-medium px-3.5 py-1.5 rounded-xl cursor-pointer flex items-center gap-1.5 transition-all"
                         >
                           查看结果
@@ -544,10 +652,10 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                       {isProcessing && (
                         <Button
                           size="sm"
-                          onClick={() => onOpenTask(task.task_id, task.stage)}
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs hover:shadow-indigo-500/20 text-xs font-medium px-3.5 py-1.5 rounded-xl cursor-pointer flex items-center gap-1.5 transition-all"
+                          onClick={(e) => { e.stopPropagation(); onOpenTask(task.task_id, task.stage); }}
+                          className="bg-purple-600 hover:bg-purple-700 text-white shadow-xs hover:shadow-purple-500/20 text-xs font-medium px-3.5 py-1.5 rounded-xl cursor-pointer flex items-center gap-1.5 transition-all"
                         >
-                          查看进度
+                          实时控制台
                           <ArrowRight className="w-3.5 h-3.5" />
                         </Button>
                       )}
@@ -564,13 +672,12 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                         </Button>
                       )}
 
-                      {/* Delete Button */}
                       <Button
                         size="icon"
                         variant="ghost"
                         onClick={(e) => {
                           e.stopPropagation()
-                          setTaskToDelete(task)
+                          setTasksToDelete([task])
                         }}
                         className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 h-8 w-8 rounded-lg cursor-pointer transition-colors"
                         title="删除该条记录"
@@ -586,39 +693,45 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
         )}
       </div>
 
-      {/* Delete Confirmation Modal */}
-      <Dialog open={!!taskToDelete} onOpenChange={(open) => !open && setTaskToDelete(null)}>
-        <DialogContent className="max-w-md bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-2xl p-6">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-slate-900 dark:text-slate-100 text-lg">
-              <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />
+      {/* 删除确认弹窗 */}
+      <Dialog open={tasksToDelete.length > 0} onOpenChange={(open) => !open && setTasksToDelete([])}>
+        <DialogContent className="sm:max-w-[440px] bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xl">
+          <DialogHeader className="gap-3">
+            <DialogTitle className="flex items-center gap-3 text-slate-900 dark:text-slate-100 text-lg font-semibold">
+              <div className="w-10 h-10 rounded-full bg-rose-100 dark:bg-rose-900/40 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400" strokeWidth={2.5} />
+              </div>
               确认删除该转译任务？
             </DialogTitle>
-            <DialogDescription className="text-slate-500 dark:text-slate-400 text-xs sm:text-sm mt-1">
-              任务文件“<span className="font-semibold text-slate-700 dark:text-slate-300">{taskToDelete?.filename}</span>”及其生成的音视频数据将被永久物理移除，不可撤销。
+            <DialogDescription className="text-[#5c5c5c] dark:text-[#8f959e] text-sm leading-relaxed pl-[52px]">
+              {tasksToDelete.length === 1 ? (
+                <>任务文件“<span className="font-bold text-slate-900 dark:text-slate-100">{tasksToDelete[0]?.filename}</span>”及其生成的音视频数据将被永久物理移除，不可撤销。</>
+              ) : (
+                <>确定要永久删除选中的 <span className="font-bold text-slate-900 dark:text-slate-100">{tasksToDelete.length}</span> 个任务及其生成的音视频数据吗？此操作不可撤销。</>
+              )}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="mt-6 flex gap-2 justify-end">
+          <DialogFooter className="mt-8 flex gap-3 justify-end !mx-0 !mb-0 !p-0 border-none bg-transparent">
             <Button
               variant="outline"
-              onClick={() => setTaskToDelete(null)}
-              className="text-xs cursor-pointer rounded-xl border-slate-200 dark:border-slate-800"
+              onClick={() => setTasksToDelete([])}
+              className="text-sm font-medium cursor-pointer rounded-xl border-[#d9d9d9] dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 px-5"
             >
               取消
             </Button>
             <Button
               variant="destructive"
-              disabled={!!deletingTaskId}
+              disabled={isDeleting}
               onClick={confirmDelete}
-              className="text-xs cursor-pointer rounded-xl bg-rose-600 hover:bg-rose-700 text-white"
+              className="text-sm font-medium cursor-pointer rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-5 shadow-sm"
             >
-              {deletingTaskId ? '正在删除...' : '确认删除'}
+              {isDeleting ? '正在删除...' : '确认删除'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* API Key Modal Prompt for Retry */}
+      {/* 重试时的 API Key 弹窗 */}
       <Dialog open={showKeyDialog} onOpenChange={setShowKeyDialog}>
         <DialogContent className="max-w-md bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-2xl p-6">
           <DialogHeader>
@@ -664,7 +777,7 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
         </DialogContent>
       </Dialog>
 
-      {/* Task Detail & Live Log Console Drawer */}
+      {/* 任务详情与实时日志控制台抽屉 */}
       <TaskDetailDrawer
         taskId={detailDrawerTaskId}
         isOpen={!!detailDrawerTaskId}

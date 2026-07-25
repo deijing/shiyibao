@@ -64,7 +64,8 @@ def _memory_gb() -> int | None:
 
 
 def _chip_name() -> str:
-    if platform.system() == "Darwin":
+    sys_name = platform.system()
+    if sys_name == "Darwin":
         try:
             result = subprocess.run(
                 ["sysctl", "-n", "machdep.cpu.brand_string"],
@@ -78,7 +79,24 @@ def _chip_name() -> str:
         except subprocess.SubprocessError:
             pass
         return "Apple Silicon"
-    return platform.processor() or platform.machine()
+    elif sys_name == "Windows":
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            )
+            cpu_name, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+            winreg.CloseKey(key)
+            if cpu_name and cpu_name.strip():
+                return cpu_name.strip()
+        except Exception:
+            pass
+        proc_id = os.environ.get("PROCESSOR_IDENTIFIER")
+        if proc_id and proc_id.strip():
+            return proc_id.strip()
+
+    return platform.processor() or platform.machine() or "Generic CPU"
 
 
 def _response() -> dict:

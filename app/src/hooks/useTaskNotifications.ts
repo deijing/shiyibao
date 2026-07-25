@@ -79,7 +79,7 @@ export function useTaskNotifications() {
         })
         window.localStorage.setItem(TASK_STAGES_KEY, JSON.stringify(nextStages))
       } catch {
-        // A temporary API outage should not clear existing notifications.
+        // 临时 API 故障不应清除已有通知。
       }
     }
 
