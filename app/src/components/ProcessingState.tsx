@@ -112,6 +112,11 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
   // 当前步骤视图（用户可切换步骤或启用自动跟随）
   const [activeStep, setActiveStep] = useState<ProcessingStepIndex>(1)
   const [autoFollow, setAutoFollow] = useState(true)
+  const autoFollowRef = useRef(autoFollow)
+  useEffect(() => {
+    autoFollowRef.current = autoFollow
+  }, [autoFollow])
+
   const [logFilter, setLogFilter] = useState<'all' | 'gemini' | 'asr' | 'tts' | 'ffmpeg'>('all')
 
   // 动态实时数据文本
@@ -128,6 +133,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
   const [copiedLog, setCopiedLog] = useState(false)
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const completeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const completedRef = useRef(false)
   const logsContainerRef = useRef<HTMLDivElement | null>(null)
 
@@ -141,7 +147,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
       setStatus(s)
 
       const currentAutoStep = stageToStepNumber(s.stage)
-      if (autoFollow) {
+      if (autoFollowRef.current) {
         setActiveStep(currentAutoStep)
       }
 
@@ -182,18 +188,19 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
         completedRef.current = true
         if (intervalRef.current) clearInterval(intervalRef.current)
         clearActiveTaskId()
-        setTimeout(onComplete, 1200)
+        completeTimerRef.current = setTimeout(onComplete, 1200)
       }
     } catch {
       // 网络错误，继续轮询
     }
-  }, [taskId, onComplete, autoFollow])
+  }, [taskId, onComplete])
 
   useEffect(() => {
     pollData()
     intervalRef.current = setInterval(pollData, 1500)
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
+      if (completeTimerRef.current) clearTimeout(completeTimerRef.current)
     }
   }, [pollData])
 

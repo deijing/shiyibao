@@ -12,14 +12,39 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.3'
+export const CURRENT_VERSION = 'v0.1.4'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
+  {
+    version: 'v0.1.4',
+    date: '2026-07-28',
+    title: '内存架构深度优化与流媒体资源回收升级',
+    isLatest: true,
+    highlights: [
+      '彻底修复时间轴视频帧抽离、声纹试听与流媒体播放器中的 Media 元素与 Blob 内存泄露',
+      '后端任务日志 task.json 引入 500 条上限管控，解决大视频转译时的磁盘 I/O 与内存膨胀',
+      '加固 React 定时器与异步任务生命周期，组件卸载时自动切断未完成的视频 Seek 与动画帧',
+    ],
+    details: {
+      features: [
+        '优化 ResultState 结果页时间轴帧提取流，增加 isCancelled 自动取消与 Video 实例强行销毁机制',
+        '优化 VoiceLibrary 声纹试听库，新增页面卸载时的音频播放停止与 Blob URL 自动撤销钩子',
+      ],
+      improvements: [
+        'ProcessingState 聚焦控制台 pollData 解耦 autoFollow 依赖，避免频繁解绑/重建轮询定时器',
+        '后端 task.json 日志容量硬上限保护（最大 500 条），大幅提升长任务数据读写性能并降低包体大小',
+        'TaskDetailDrawer 字幕导出 Blob URL 撤销延后 1 秒执行，保障低配机器与各种 Webview 环境顺利下载',
+      ],
+      fixes: [
+        '修复在视频缩略图提取过程中离开页面导致的异步状态回调报错与内存持续占用问题',
+        '修复流式播放器及组件卸载后后台未及时关闭多媒体流缓冲的问题',
+      ],
+    },
+  },
   {
     version: 'v0.1.3',
     date: '2026-07-25',
     title: '流式渲染稳定性与本地安全加固',
-    isLatest: true,
     highlights: [
       '修复流式分片被配音轨截短，播放时间轴与最终成片时长对齐',
       '收紧本地目录扫描 / 路径注册接口，防止跨域网页读取本机视频',

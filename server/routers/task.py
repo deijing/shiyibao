@@ -157,6 +157,8 @@ def _append_log(task_id: str, tag: str, message: str, log_type: str = "info") ->
             "message": message,
             "type": log_type
         })
+        if len(logs) > 500:
+            logs = logs[-500:]
         meta["logs"] = logs
         tmp = meta_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -179,6 +181,27 @@ def _find_video(task_id: str) -> Path:
 
 
 def _status(meta: dict) -> TaskStatusResponse:
+    video_title = meta.get("video_title")
+    task_id = meta.get("task_id")
+    if not video_title and task_id:
+        sub_file = _task_dir(task_id) / f"subtitles_{meta.get('target_lang', 'zh')}.json"
+        if not sub_file.exists():
+            sub_file = _task_dir(task_id) / "subtitles.json"
+        if sub_file.exists():
+            try:
+                segments = json.loads(sub_file.read_text(encoding="utf-8"))
+                if segments:
+                    sample = (segments[0].get("translated_text") or segments[0].get("source_text") or "").strip()
+                    for prefix in ["在今天的节目中，", "在今天的视频中，", "大家好，", "欢迎来到", "今天我们来", "在这个视频中，", "Hello ", "Hi "]:
+                        if sample.startswith(prefix):
+                            sample = sample[len(prefix):].strip()
+                    clean = sample.split("，")[0].split("。")[0].split("!")[0].strip()
+                    if len(clean) >= 4:
+                        video_title = clean[:25]
+                        _update_meta(task_id, video_title=video_title)
+            except Exception:
+                pass
+
     return TaskStatusResponse(
         task_id=meta["task_id"],
         stage=meta.get("stage", TaskStage.PENDING.value),
@@ -197,6 +220,7 @@ def _status(meta: dict) -> TaskStatusResponse:
         completed_chunks=meta.get("completed_chunks", 0),
         chunks=meta.get("chunks", []),
         rendered_seconds=meta.get("rendered_seconds", 0.0),
+        video_title=video_title,
     )
 
 
@@ -287,6 +311,15 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             source_lang=source_lang, log_cb=log_cb,
         )
         log_cb("AI 翻译", "Gemini 深度上下文润色与全片字幕翻译完成", "success")
+
+        # 智能总结视频标题
+        try:
+            video_title = await translate.summarize_video_title(segments, gemini_api_key=req.gemini_api_key, gemini_model=req.gemini_model)
+            if video_title:
+                _update_meta(task_id, video_title=video_title)
+                log_cb("AI 翻译", f"智能生成视频标题: \"{video_title}\"", "info")
+        except Exception as e:
+            logger.warning("Failed to generate video title: %s", e)
 
         if req.stream_mode != "batch" and len(segments) > 0:
             # ---- 真正的增量流式渲染 ----
@@ -450,6 +483,23 @@ async def list_tasks() -> list[dict]:
             continue
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if not meta.get("video_title"):
+                sub_file = task_dir / f"subtitles_{meta.get('target_lang', 'zh')}.json"
+                if not sub_file.exists():
+                    sub_file = task_dir / "subtitles.json"
+                if sub_file.exists():
+                    try:
+                        segs = json.loads(sub_file.read_text(encoding="utf-8"))
+                        if segs:
+                            sample = (segs[0].get("translated_text") or segs[0].get("source_text") or "").strip()
+                            for prefix in ["在今天的节目中，", "在今天的视频中，", "大家好，", "欢迎来到", "今天我们来", "Hello ", "Hi "]:
+                                if sample.startswith(prefix):
+                                    sample = sample[len(prefix):].strip()
+                            clean = sample.split("，")[0].split("。")[0].split("!")[0].strip()
+                            if len(clean) >= 4:
+                                meta["video_title"] = clean[:25]
+                    except Exception:
+                        pass
             tasks.append(meta)
         except (json.JSONDecodeError, KeyError):
             continue

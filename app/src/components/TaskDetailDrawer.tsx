@@ -240,7 +240,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
       a.href = url
       a.download = `subtitles_${taskId.substring(0, 8)}.json`
       a.click()
-      URL.revokeObjectURL(url)
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch {
       alert('字幕导出失败')
     }

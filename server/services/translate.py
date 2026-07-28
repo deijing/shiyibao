@@ -158,3 +158,72 @@ async def translate_subtitles(
     out_path = task_dir / f"subtitles_{target_lang}.json"
     out_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
     return segments
+
+
+async def summarize_video_title(
+    segments: list[dict],
+    gemini_api_key: str = "",
+    gemini_model: str = "gemini-2.0-flash",
+) -> str:
+    """根据字幕分段自动总结精炼的中文视频标题（6-16字）。"""
+    if not segments:
+        return ""
+
+    sample_texts = []
+    for s in segments[:20]:
+        t = (s.get("translated_text") or s.get("source_text") or "").strip()
+        if t:
+            sample_texts.append(t)
+
+    if not sample_texts:
+        return ""
+
+    context = "\n".join(sample_texts)
+
+    def _local_fallback() -> str:
+        first = sample_texts[0]
+        clean = first
+        for prefix in [
+            "在今天的节目中，", "在今天的视频中，", "在今天的课程中，",
+            "大家好，", "欢迎来到", "今天我们来", "在这个视频中，",
+            "今天讲", "Hello, ", "Hi guys, "
+        ]:
+            if clean.startswith(prefix):
+                clean = clean[len(prefix):].strip()
+        clean = clean.split("，")[0].split("。")[0].split("!")[0].strip()
+        if len(clean) >= 4:
+            return clean[:25]
+        return sample_texts[0][:25]
+
+    if not gemini_api_key:
+        return _local_fallback()
+
+    model_name = gemini_model or "gemini-2.0-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+    headers = {"Content-Type": "application/json"}
+    params = {"key": gemini_api_key}
+
+    prompt = (
+        "你是一个专业精炼的视频内容编辑。请根据以下视频开篇字幕内容，总结出一个吸引人且准确描述核心内容的视频中文标题（长度控制在 6-16 字以内）。"
+        "仅输出最终标题文字本身，绝不要带有任何引号、冒号、序号、解释说明或标点符号：\n\n"
+        f"字幕文本：\n{context[:1000]}"
+    )
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 40},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(url, json=payload, headers=headers, params=params)
+            if resp.status_code == 200:
+                data = resp.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                text = text.replace('"', '').replace('"', '').replace('《', '').replace('》', '').replace(':', '').replace('：', '').strip()
+                if text and len(text) >= 2:
+                    return text[:30]
+    except Exception as e:
+        logger.warning("Gemini title generation failed, falling back to local extractor: %s", e)
+
+    return _local_fallback()

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import {
-  Download, ChevronDown, Crown, Check,
+  Download, ChevronDown, Check,
   Play, Pause, Volume2, VolumeX, Captions, Maximize, Video, Type, AudioWaveform,
   Music, RotateCcw, Copy, Sparkles, Film, ZoomIn, ZoomOut
 } from 'lucide-react'
@@ -56,6 +56,73 @@ function getExportFilename(originalFilename?: string, targetLang?: string): stri
   return `${baseName}_${langLabel}翻译版.mp4`
 }
 
+function getResolutionShortLabel(height: number | null): string {
+  if (!height || height <= 0) return '原画'
+  if (height >= 2160) return '4K'
+  if (height >= 1440) return '2K'
+  if (height >= 1080) return '1080P'
+  if (height >= 720) return '720P'
+  if (height >= 480) return '480P'
+  return `${height}P`
+}
+
+function getResolutionFullLabel(height: number | null): string {
+  if (!height || height <= 0) return '原画画质'
+  if (height >= 2160) return '4K HDR 超清'
+  if (height >= 1440) return '2K 超清'
+  if (height >= 1080) return '1080P Full HD'
+  if (height >= 720) return '720P 高清'
+  if (height >= 480) return '480P 标清'
+  return `${height}P`
+}
+
+interface QualityOption {
+  id: string
+  label: string
+  shortLabel: string
+  isOriginal: boolean
+}
+
+function getExportQualityOptions(height: number | null): QualityOption[] {
+  if (!height || height <= 0) {
+    return [
+      { id: 'original', label: '原画画质', shortLabel: '原画', isOriginal: true }
+    ]
+  }
+
+  const mainShort = getResolutionShortLabel(height)
+  const mainFull = getResolutionFullLabel(height)
+
+  const options: QualityOption[] = [
+    {
+      id: `res-${height}`,
+      label: `${mainFull} (原画)`,
+      shortLabel: mainShort,
+      isOriginal: true,
+    }
+  ]
+
+  const standardLevels = [
+    { minHeight: 1440, label: '2K 超清', shortLabel: '2K' },
+    { minHeight: 1080, label: '1080P Full HD', shortLabel: '1080P' },
+    { minHeight: 720, label: '720P 高清', shortLabel: '720P' },
+    { minHeight: 480, label: '480P 标清', shortLabel: '480P' },
+  ]
+
+  for (const level of standardLevels) {
+    if (height > level.minHeight) {
+      options.push({
+        id: `res-${level.minHeight}`,
+        label: level.label,
+        shortLabel: level.shortLabel,
+        isOriginal: false,
+      })
+    }
+  }
+
+  return options
+}
+
 export default function ResultState({ taskId, onReset }: ResultStateProps) {
   const [taskStatus, setTaskStatus] = useState<TaskStatus | null>(null)
   const [subtitles, setSubtitles] = useState<SubtitleSegment[]>([])
@@ -67,11 +134,141 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
   const [showSubtitles, setShowSubtitles] = useState(true)
   const [copiedId, setCopiedId] = useState(false)
   const [zoomScale, setZoomScale] = useState(1)
+  const [videoHeight, setVideoHeight] = useState<number | null>(null)
+  const [selectedQualityId, setSelectedQualityId] = useState<string | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showControls, setShowControls] = useState(true)
+  const [subtitlePos, setSubtitlePos] = useState<{ x: number; y: number } | null>(null)
+  const [isDraggingSub, setIsDraggingSub] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
   const timelineScrollRef = useRef<HTMLDivElement>(null)
+  const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const subDragStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null)
+
+  const handleSubPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setIsDraggingSub(true)
+    subDragStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      startX: subtitlePos?.x || 0,
+      startY: subtitlePos?.y || 0,
+    }
+  }
+
+  const handleSubPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingSub || !subDragStartRef.current) return
+    e.stopPropagation()
+    const dx = e.clientX - subDragStartRef.current.mouseX
+    const dy = e.clientY - subDragStartRef.current.mouseY
+
+    let containerWidth = 800
+    let containerHeight = 450
+    if (videoContainerRef.current) {
+      containerWidth = videoContainerRef.current.clientWidth
+      containerHeight = videoContainerRef.current.clientHeight
+    }
+    const maxDx = containerWidth / 2 - 40
+    const minDx = -maxDx
+    const minDy = -containerHeight + 100
+    const maxDy = 60
+
+    const newX = Math.max(minDx, Math.min(maxDx, subDragStartRef.current.startX + dx))
+    const newY = Math.max(minDy, Math.min(maxDy, subDragStartRef.current.startY + dy))
+
+    setSubtitlePos({ x: newX, y: newY })
+  }
+
+  const handleSubPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingSub) return
+    e.stopPropagation()
+    setIsDraggingSub(false)
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    subDragStartRef.current = null
+  }
+
+  const revealControls = () => {
+    setShowControls(true)
+    if (hideControlsTimer.current) {
+      clearTimeout(hideControlsTimer.current)
+    }
+    if (isPlaying) {
+      hideControlsTimer.current = setTimeout(() => {
+        setShowControls(false)
+      }, 2500)
+    }
+  }
+
+  const handleContainerMouseMove = () => {
+    revealControls()
+  }
+
+  const handleContainerMouseLeave = () => {
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current)
+    if (isPlaying) {
+      setShowControls(false)
+    }
+  }
+
+  // 播放状态改变时重置/控制显示逻辑
+  useEffect(() => {
+    if (!isPlaying) {
+      setShowControls(true)
+      if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current)
+    } else {
+      revealControls()
+    }
+    return () => {
+      if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current)
+    }
+  }, [isPlaying])
+
+  // 监听全屏状态变化
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+    }
+  }, [])
+
+  // 监听键盘空格键控制播放/暂停
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement as HTMLElement
+      if (
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          activeEl.isContentEditable)
+      ) {
+        return
+      }
+
+      if (e.code === 'Space' || e.key === ' ') {
+        e.preventDefault()
+        if (videoRef.current) {
+          if (videoRef.current.paused) {
+            videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {})
+          } else {
+            videoRef.current.pause()
+            setIsPlaying(false)
+          }
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   const [thumbnails, setThumbnails] = useState<string[]>([])
   const [isDraggingUI, setIsDraggingUI] = useState(false)
@@ -100,18 +297,29 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
   // 提取时间轴视频缩略图
   useEffect(() => {
     if (!videoUrl) return
+    let isCancelled = false
+    let video: HTMLVideoElement | null = null
+
     const extract = async () => {
       try {
-        const video = document.createElement('video')
+        video = document.createElement('video')
         video.src = videoUrl
         video.crossOrigin = 'anonymous'
         video.muted = true
         video.playsInline = true
 
         await new Promise((resolve, reject) => {
-          video.onloadedmetadata = resolve
+          if (!video) return resolve(null)
+          video.onloadedmetadata = () => {
+            if (video && video.videoHeight > 0) {
+              setVideoHeight(video.videoHeight)
+            }
+            resolve(null)
+          }
           video.onerror = reject
         })
+
+        if (isCancelled || !video) return
 
         const count = 30
         const interval = video.duration / count
@@ -125,17 +333,38 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
 
         const thumbs: string[] = []
         for (let i = 0; i < count; i++) {
+          if (isCancelled) break
           video.currentTime = i * interval
-          await new Promise(r => { video.onseeked = r })
+          await new Promise(r => { if (video) video.onseeked = r })
+          if (isCancelled) break
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
           thumbs.push(canvas.toDataURL('image/jpeg', 0.5))
         }
-        setThumbnails(thumbs)
+        if (!isCancelled) {
+          setThumbnails(thumbs)
+        }
       } catch (e) {
         console.error('Failed to extract thumbs', e)
+      } finally {
+        if (video) {
+          video.pause()
+          video.removeAttribute('src')
+          video.load()
+          video = null
+        }
       }
     }
     extract()
+
+    return () => {
+      isCancelled = true
+      if (video) {
+        video.pause()
+        video.removeAttribute('src')
+        video.load()
+        video = null
+      }
+    }
   }, [videoUrl])
 
   // 通过 requestAnimationFrame 平滑同步视频时间
@@ -172,10 +401,15 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
     return () => container.removeEventListener('wheel', handleWheel)
   }, [])
 
-  // 同步视频时长与当前时间
+  // 同步视频时长与当前时间及真实画质
   const handleLoadedMetadata = () => {
-    if (videoRef.current && videoRef.current.duration > 0) {
-      setDuration(videoRef.current.duration)
+    if (videoRef.current) {
+      if (videoRef.current.duration > 0) {
+        setDuration(videoRef.current.duration)
+      }
+      if (videoRef.current.videoHeight > 0) {
+        setVideoHeight(videoRef.current.videoHeight)
+      }
     }
   }
 
@@ -288,6 +522,10 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
   // 计算播放头左侧百分比
   const playheadPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0
 
+  // 动态导出画质选项
+  const exportOptions = getExportQualityOptions(videoHeight)
+  const activeOption = exportOptions.find((opt) => opt.id === selectedQualityId) || exportOptions[0]
+
   return (
     <div className="flex-grow flex flex-col p-4 sm:p-6 max-w-7xl mx-auto w-full select-none">
       {/* 单一一体化工作台面板 */}
@@ -312,6 +550,16 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
             </div>
           </div>
 
+          {/* 自动生成的视频标题 - 顶部工具栏中央（用户勾选位置 1） */}
+          {taskStatus?.video_title && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-50/90 dark:bg-purple-500/10 border border-purple-200/80 dark:border-purple-500/20 text-purple-700 dark:text-purple-300 font-semibold text-xs max-w-sm lg:max-w-md shadow-2xs">
+              <Film className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+              <span className="truncate" title={taskStatus.video_title}>
+                {taskStatus.video_title}
+              </span>
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <Button
               variant="outline"
@@ -322,34 +570,40 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
               新建任务
             </Button>
 
-            {/* 导出视频按钮 - 适配浅色/深色模式 */}
+            {/* 导出视频按钮 - 适配浅色/深色模式，根据视频画质实时计算 */}
             <DropdownMenu>
               <DropdownMenuTrigger className="bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs px-4 py-2 rounded-xl flex items-center gap-2 transition-all cursor-pointer border-none shadow-sm outline-none">
                 <Download className="w-3.5 h-3.5" />
                 导出视频
                 <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded font-normal flex items-center gap-0.5">
-                  1080P <ChevronDown className="w-3 h-3" />
+                  {activeOption.shortLabel} <ChevronDown className="w-3 h-3" />
                 </span>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 w-48 rounded-xl p-1.5 shadow-xl">
-                <DropdownMenuItem
-                  onClick={() => {
-                    const exportFilename = getExportFilename(taskStatus?.filename, taskStatus?.target_lang)
-                    const a = document.createElement('a')
-                    a.href = exportUrl
-                    a.download = exportFilename
-                    a.click()
-                  }}
-                  className="flex justify-between items-center bg-purple-50 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 font-medium rounded-lg text-xs cursor-pointer px-3 py-2"
-                >
-                  1080P Full HD <Check className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-                </DropdownMenuItem>
-                <DropdownMenuItem className="flex justify-between items-center hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-xs cursor-pointer text-slate-600 dark:text-slate-400 px-3 py-2">
-                  4K HDR 超清 <Crown className="w-3.5 h-3.5 text-amber-500" />
-                </DropdownMenuItem>
-                <DropdownMenuItem className="hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-xs cursor-pointer text-slate-600 dark:text-slate-400 px-3 py-2">
-                  720P 高清
-                </DropdownMenuItem>
+              <DropdownMenuContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 w-52 rounded-xl p-1.5 shadow-xl">
+                {exportOptions.map((opt) => {
+                  const isSelected = opt.id === activeOption.id
+                  return (
+                    <DropdownMenuItem
+                      key={opt.id}
+                      onClick={() => {
+                        setSelectedQualityId(opt.id)
+                        const exportFilename = getExportFilename(taskStatus?.filename, taskStatus?.target_lang)
+                        const a = document.createElement('a')
+                        a.href = exportUrl
+                        a.download = exportFilename
+                        a.click()
+                      }}
+                      className={`flex justify-between items-center rounded-lg text-xs cursor-pointer px-3 py-2 ${
+                        isSelected
+                          ? 'bg-purple-50 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 font-medium'
+                          : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <span>{opt.label}</span>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />}
+                    </DropdownMenuItem>
+                  )
+                })}
                 <DropdownMenuSeparator className="bg-slate-100 dark:bg-slate-800" />
                 <DropdownMenuItem
                   onClick={() => {
@@ -370,10 +624,20 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
         {/* 中间：巨幕视频播放器视口 */}
         <div
           ref={videoContainerRef}
-          className="relative group bg-[#0F172A] dark:bg-[#090D16] flex flex-col items-center justify-center min-h-[380px] lg:min-h-[440px] border-b border-slate-200/80 dark:border-slate-800"
+          onMouseMove={handleContainerMouseMove}
+          onMouseLeave={handleContainerMouseLeave}
+          className={`relative group bg-[#0F172A] dark:bg-[#090D16] flex flex-col items-center justify-center border-b border-slate-200/80 dark:border-slate-800 ${
+            isFullscreen
+              ? 'fixed inset-0 z-50 w-screen h-screen min-h-screen border-none rounded-none'
+              : 'min-h-[380px] lg:min-h-[440px]'
+          } ${!showControls && isPlaying ? 'cursor-none' : ''}`}
         >
           {/* 顶部模式标签 */}
-          <div className="absolute top-4 left-4 z-20 bg-black/40 backdrop-blur-md px-3.5 py-1.5 rounded-full text-xs font-medium text-white/90 border border-white/10 flex items-center gap-2 shadow-lg">
+          <div
+            className={`absolute top-4 left-4 z-20 bg-black/40 backdrop-blur-md px-3.5 py-1.5 rounded-full text-xs font-medium text-white/90 border border-white/10 flex items-center gap-2 shadow-lg transition-opacity duration-300 ${
+              showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            }`}
+          >
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
             实时预览模式
           </div>
@@ -385,16 +649,52 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
             onLoadedMetadata={handleLoadedMetadata}
             onEnded={() => setIsPlaying(false)}
             onClick={togglePlay}
-            className="w-full h-full max-h-[480px] object-contain cursor-pointer"
+            className={`w-full object-contain cursor-pointer transition-all ${
+              isFullscreen ? 'h-full max-h-screen' : 'h-full max-h-[480px]'
+            }`}
             playsInline
           />
 
-          {/* 悬浮字幕显示区 */}
+          {/* 悬浮字幕显示区 - 默认自适应，可拖动自定义，双击/点击小按钮可重置自适应 */}
           {activeSubtitle && (
-            <div className="absolute bottom-20 left-1/2 -translate-x-1/2 px-6 py-2 rounded-2xl bg-black/70 backdrop-blur-md border border-white/15 shadow-2xl text-center max-w-3xl pointer-events-none z-10">
-              <p className="text-lg sm:text-2xl font-bold text-white tracking-wide drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
+            <div
+              onPointerDown={handleSubPointerDown}
+              onPointerMove={handleSubPointerMove}
+              onPointerUp={handleSubPointerUp}
+              onDoubleClick={(e) => {
+                e.stopPropagation()
+                setSubtitlePos(null)
+              }}
+              style={
+                subtitlePos
+                  ? {
+                      transform: `translate3d(calc(-50% + ${subtitlePos.x}px), ${subtitlePos.y}px, 0)`,
+                      willChange: isDraggingSub ? 'transform' : 'auto',
+                    }
+                  : undefined
+              }
+              className={`absolute left-1/2 -translate-x-1/2 px-6 py-2.5 rounded-2xl bg-black/75 backdrop-blur-md border border-white/15 shadow-2xl text-center max-w-[92%] w-max z-30 cursor-grab active:cursor-grabbing select-none ${
+                isDraggingSub
+                  ? 'transition-none scale-[1.01] shadow-[0_0_24px_rgba(168,85,247,0.5)] border-purple-400/80'
+                  : 'transition-[bottom,opacity,transform] duration-200 hover:border-purple-400/40'
+              } ${showControls ? 'bottom-20' : 'bottom-10'}`}
+              title={subtitlePos ? '拖动自定义字幕位置（双击重置为自适应）' : '默认自适应位置（按住可拖动自定义）'}
+            >
+              <p className="text-base sm:text-xl lg:text-2xl font-bold text-white tracking-wide whitespace-nowrap overflow-hidden text-ellipsis drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] pointer-events-none">
                 {activeSubtitle}
               </p>
+              {subtitlePos && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setSubtitlePos(null)
+                  }}
+                  className="absolute -top-2.5 -right-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-full p-0.5 text-[10px] font-bold shadow-md border border-white/20 cursor-pointer flex items-center justify-center w-5 h-5 transition-transform hover:scale-110"
+                  title="恢复默认自适应位置"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           )}
 
@@ -409,7 +709,11 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
           )}
 
           {/* 玻璃质感悬浮控制条 */}
-          <div className="absolute bottom-4 left-4 right-4 h-14 bg-slate-900/80 dark:bg-slate-900/80 backdrop-blur-xl rounded-2xl border border-white/15 flex items-center px-4 sm:px-6 gap-4 text-white/90 shadow-2xl z-20 transition-opacity duration-300 group-hover:opacity-100 opacity-95">
+          <div
+            className={`absolute bottom-4 left-4 right-4 h-14 bg-slate-900/80 dark:bg-slate-900/80 backdrop-blur-xl rounded-2xl border border-white/15 flex items-center px-4 sm:px-6 gap-4 text-white/90 shadow-2xl z-20 transition-opacity duration-300 ${
+              showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+            }`}
+          >
             <button onClick={togglePlay} className="hover:text-purple-400 transition-colors p-1 cursor-pointer">
               {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
             </button>

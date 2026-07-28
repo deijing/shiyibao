@@ -3,7 +3,7 @@ import {
   Clock, FileVideo, CheckCircle2, XCircle, Loader2,
   ArrowRight, Inbox, RefreshCw, RotateCcw, Trash2,
   HelpCircle, Languages, Mic, Filter, KeyRound,
-  AlertCircle, Terminal, Play, ListChecks, Check
+  AlertCircle, Terminal, Play, ListChecks, Check, Film
 } from 'lucide-react'
 import { getTaskList, deleteTask, startTask, getThumbnailUrl, type TaskListItem } from '@/lib/api'
 import { loadSettings, saveSettings } from './SettingsPanel'
@@ -511,20 +511,34 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                       <TaskVideoThumbnail taskId={task.task_id} alt={task.filename} />
 
                       <div className="flex-grow min-w-0">
-                        {/* 标题与状态徽标头部 */}
-                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                          <h3
-                            onClick={() => {
-                              if (isSelectionMode) return;
-                              if (!isError) onOpenTask(task.task_id, task.stage);
-                            }}
-                            className={`font-semibold text-slate-900 dark:text-slate-100 text-sm sm:text-base leading-snug truncate max-w-md ${
-                              !isError && !isSelectionMode ? 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors' : ''
-                            }`}
-                            title={task.filename}
-                          >
-                            {task.filename}
-                          </h3>
+                        {/* 标题与状态徽标头部（用户勾选位置 2） */}
+                        <div className="flex items-start justify-between gap-2 mb-1 flex-wrap">
+                          <div className="flex flex-col gap-0.5 min-w-0 max-w-md lg:max-w-lg">
+                            <h3
+                              onClick={() => {
+                                if (isSelectionMode) return;
+                                if (!isError) onOpenTask(task.task_id, task.stage);
+                              }}
+                              className={`font-bold text-slate-900 dark:text-slate-100 text-sm sm:text-base leading-snug truncate ${
+                                !isError && !isSelectionMode ? 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors' : ''
+                              }`}
+                              title={task.video_title || task.filename}
+                            >
+                              {task.video_title ? (
+                                <span className="flex items-center gap-1.5">
+                                  <Film className="w-4 h-4 text-indigo-500 shrink-0" />
+                                  <span className="truncate">{task.video_title}</span>
+                                </span>
+                              ) : (
+                                task.filename
+                              )}
+                            </h3>
+                            {task.video_title && (
+                              <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate" title={task.filename}>
+                                源文件: {task.filename}
+                              </p>
+                            )}
+                          </div>
 
                           <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full font-medium shrink-0 border ${cfg.bg} ${cfg.color} ${cfg.border}`}>
                             <StatusIcon className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />

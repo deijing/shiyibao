@@ -45,6 +45,7 @@ class TaskStatusResponse(BaseModel):
     completed_chunks: int = 0
     chunks: list[dict] = Field(default_factory=list)
     rendered_seconds: float = 0.0
+    video_title: Optional[str] = None
 
 
 

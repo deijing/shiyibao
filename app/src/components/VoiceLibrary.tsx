@@ -210,6 +210,12 @@ export default function VoiceLibrary({ onSelectVoice }: VoiceLibraryProps) {
     onSelectVoice?.(voiceId)
   }, [onSelectVoice])
 
+  useEffect(() => {
+    return () => {
+      stopPlayback()
+    }
+  }, [stopPlayback])
+
 
 
   // 按索引选择图标，丰富单色视觉层次

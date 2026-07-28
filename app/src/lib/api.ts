@@ -64,6 +64,7 @@ export interface TaskStatus {
   message: string
   error: string | null
   filename?: string
+  video_title?: string
   source_lang?: string
   target_lang?: string
   voice?: string
@@ -103,6 +104,7 @@ export interface TaskLogItem {
 export interface TaskListItem {
   task_id: string
   filename: string
+  video_title?: string
   stage: string
   progress: number
   message: string
