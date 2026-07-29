@@ -30,3 +30,35 @@ jobs:
         working-directory: app
       - run: npm run build
         working-directory: app
+
+  # Rust 检查只在 Windows 上跑：桌面壳没有平台相关代码，一个平台足够，
+  # 而 Windows 是主要分发目标且不需要额外系统依赖（Linux 要装 webkit2gtk 等）。
+  rust:
+    name: Rust desktop shell
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      # generate_context! 在编译期把 frontendDist 的产物嵌进二进制，缺 app/dist 编不过。
+      - run: npm ci
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # tauri-build 会把 externalBin 复制进 target 目录，边车缺失直接编译失败。
+      # 编译检查不会运行边车，占位空文件就够，省下几分钟 PyInstaller 打包。
+      # 文件名对应 windows-latest 的 host triple。
+      - name: Create sidecar placeholder
+        shell: bash
+        run: touch src-tauri/binaries/shiyibao-backend-x86_64-pc-windows-msvc.exe
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --locked

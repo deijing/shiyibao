@@ -127,6 +127,12 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Output "STAGE=build-nsis"
+# buildRoot 长期复用，robocopy 没带 /PURGE，bundle\nsis 会累积历次构建的安装包。
+# 不先清空就可能在下面挑中上一个版本的 exe，让冒烟验证、SHA256 与交付全部用错文件。
+$nsisBundleDir = Join-Path $buildRoot "src-tauri\target\release\bundle\nsis"
+if (Test-Path $nsisBundleDir) {
+    Remove-Item -Path $nsisBundleDir -Recurse -Force
+}
 $offlineToolsRoot = Join-Path $sourceRoot "build\offline-tools"
 $offlineNsisZip = Join-Path $offlineToolsRoot "nsis-3.11.zip"
 $offlineTauriPlugin = Join-Path $offlineToolsRoot "nsis_tauri_utils.dll"
@@ -171,46 +177,65 @@ if ($LASTEXITCODE -ne 0) {
     throw "Tauri NSIS build failed"
 }
 
-$installer = Get-ChildItem `
-    (Join-Path $buildRoot "src-tauri\target\release\bundle\nsis") `
-    -Filter "*.exe" |
-    Select-Object -First 1
-if (-not $installer) {
+# 按修改时间取最新的一个：Get-ChildItem 默认按文件名排序，目录里只要还有旧版本
+# 安装包就会挑到它而不是本轮产物。
+$installers = @(
+    Get-ChildItem $nsisBundleDir -Filter "*.exe" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending
+)
+if ($installers.Count -eq 0) {
     throw "NSIS installer was not generated"
 }
+if ($installers.Count -gt 1) {
+    $candidates = ($installers | ForEach-Object { $_.Name }) -join ", "
+    Write-Output "NSIS_INSTALLER_CANDIDATES=$candidates"
+}
+$installer = $installers[0]
 
 Write-Output "STAGE=install-and-smoke-test"
 $installDir = Join-Path `
     "C:\" `
     ("shiyibao-install-smoke-" + (Get-Date -Format "yyyyMMddHHmmss"))
-$install = Start-Process `
-    -FilePath $installer.FullName `
-    -ArgumentList @("/S", "/D=$installDir") `
-    -Wait `
-    -PassThru
-if ($install.ExitCode -ne 0) {
-    throw "NSIS installer exited with $($install.ExitCode)"
-}
-$installedApp = Join-Path $installDir "shiyibao.exe"
-if (-not (Test-Path $installedApp)) {
-    throw "Installed desktop executable is missing: $installedApp"
-}
-& $python scripts\test_packaged_desktop.py --app $installedApp
-if ($LASTEXITCODE -ne 0) {
-    throw "Installed desktop app smoke test failed"
-}
-$residualProcesses = Get-CimInstance Win32_Process |
-    Where-Object {
-        $_.ExecutablePath -and
-        $_.ExecutablePath.StartsWith(
-            $installDir,
-            [System.StringComparison]::OrdinalIgnoreCase
-        )
+try {
+    $install = Start-Process `
+        -FilePath $installer.FullName `
+        -ArgumentList @("/S", "/D=$installDir") `
+        -Wait `
+        -PassThru
+    if ($install.ExitCode -ne 0) {
+        throw "NSIS installer exited with $($install.ExitCode)"
     }
-if ($residualProcesses) {
-    $details = $residualProcesses |
-        ForEach-Object { "$($_.ProcessId):$($_.ExecutablePath)" }
-    throw "Installed desktop app left residual processes: $($details -join ', ')"
+    $installedApp = Join-Path $installDir "shiyibao.exe"
+    if (-not (Test-Path $installedApp)) {
+        throw "Installed desktop executable is missing: $installedApp"
+    }
+    & $python scripts\test_packaged_desktop.py --app $installedApp
+    if ($LASTEXITCODE -ne 0) {
+        throw "Installed desktop app smoke test failed"
+    }
+    $residualProcesses = Get-CimInstance Win32_Process |
+        Where-Object {
+            $_.ExecutablePath -and
+            $_.ExecutablePath.StartsWith(
+                $installDir,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        }
+    if ($residualProcesses) {
+        $details = $residualProcesses |
+            ForEach-Object { "$($_.ProcessId):$($_.ExecutablePath)" }
+        throw "Installed desktop app left residual processes: $($details -join ', ')"
+    }
+} catch {
+    # 失败时保留安装现场供排查，把路径打进输出免得找不到。
+    Write-Output "SMOKE_INSTALL_DIR_KEPT=$installDir"
+    throw
+}
+
+# 目录名带时间戳，每轮构建都是新目录，不清理会在 C 盘堆积。
+Remove-Item -Path $installDir -Recurse -Force -ErrorAction SilentlyContinue
+if (Test-Path $installDir) {
+    Write-Output "SMOKE_INSTALL_DIR_KEPT=$installDir"
 }
 
 Write-Output "STAGE=copy-artifact"

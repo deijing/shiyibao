@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,6 +15,41 @@ ROOT = Path(__file__).resolve().parent.parent
 BINARIES_DIR = ROOT / "src-tauri" / "binaries"
 BUILD_DIR = ROOT / "build" / "pyinstaller"
 SIDECAR_NAME = "shiyibao-backend"
+
+# rustc target triple 与 platform.machine() 对同一架构写法不同，归一化后才能比对。
+ARCH_ALIASES = {
+    "amd64": "x86_64",
+    "x64": "x86_64",
+    "x86_64": "x86_64",
+    "aarch64": "aarch64",
+    "arm64": "aarch64",
+    "i386": "i686",
+    "i686": "i686",
+    "x86": "i686",
+}
+
+
+def normalized_arch(value: str) -> str:
+    lowered = value.strip().lower()
+    return ARCH_ALIASES.get(lowered, lowered)
+
+
+def ensure_host_arch(target_triple: str) -> None:
+    """拒绝架构不符的构建。
+
+    PyInstaller 不做交叉编译，产出的边车永远是当前解释器的架构，--target-triple
+    只参与命名。放行不一致的组合就会得到「名字写着 x86_64、实体是 arm64」的边车，
+    一路通过打包与签名，直到用户在目标架构的机器上启动才崩溃。
+    """
+    target_arch = normalized_arch(target_triple.split("-", 1)[0])
+    host_arch = normalized_arch(platform.machine())
+    if target_arch == host_arch:
+        return
+    raise SystemExit(
+        f"target triple {target_triple} 要求 {target_arch} 架构，"
+        f"当前 Python 解释器是 {host_arch} 架构。"
+        "PyInstaller 不支持交叉编译，请在目标架构的机器或 CI runner 上构建边车。"
+    )
 
 
 def host_target_triple() -> str:
@@ -32,7 +68,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--target-triple",
         default="",
-        help="Tauri target triple；默认使用当前 rustc host tuple。",
+        help=(
+            "边车文件名使用的 Tauri target triple；默认取当前 rustc host tuple。"
+            "PyInstaller 不做交叉编译，该参数只决定命名与 .exe 后缀，"
+            "架构必须与当前机器一致。"
+        ),
     )
     parser.add_argument(
         "--bundle-ffmpeg",
@@ -45,6 +85,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     target_triple = args.target_triple or host_target_triple()
+    ensure_host_arch(target_triple)
     executable_suffix = ".exe" if "windows" in target_triple else ""
     output_name = f"{SIDECAR_NAME}-{target_triple}"
 

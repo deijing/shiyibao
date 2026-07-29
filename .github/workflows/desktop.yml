@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "v*"
+      - "desktop-v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -17,14 +17,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 必须带上 app：只打 dmg 时 Tauri 会把 .app 当中间产物删掉
+          # （日志里的 "Cleaning ...视译宝.app"），下面的启动验证就无从跑起。
           - name: macOS ARM64 (Apple Silicon)
             os: macos-latest
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - name: macOS x86_64 (Intel)
             os: macos-13
             target: x86_64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - name: Windows x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -96,29 +98,18 @@ jobs:
       - name: Check Rust desktop shell
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked --target ${{ matrix.target }}
 
+      # 只打包不发布：发布交给下面的 release job，确保先过完验证再公开。
       - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: --bundles ${{ matrix.bundles }} --target ${{ matrix.target }}
-          tagName: ${{ github.ref_name }}
-          releaseName: "视译宝 ${{ github.ref_name }}"
-          releaseBody: |
-            ## 下载说明
 
-            | 文件 | 适用平台 |
-            |------|---------|
-            | `*.dmg` (aarch64) | macOS Apple Silicon (M1/M2/M3/M4) |
-            | `*.dmg` (x64) | macOS Intel |
-            | `*.exe` | Windows 64 位 |
-          releaseDraft: false
-          prerelease: false
-
+      # bundle 目录名取 productName（视译宝），可执行文件名取 Cargo 包名（shiyibao），
+      # 两者并不相同。
       - name: Verify packaged macOS app
         if: runner.os == 'macOS'
         run: >-
           python scripts/test_packaged_desktop.py
-          --app "src-tauri/target/${{ matrix.target }}/release/bundle/macos/视译宝.app/Contents/MacOS/视译宝"
+          --app "src-tauri/target/${{ matrix.target }}/release/bundle/macos/视译宝.app/Contents/MacOS/shiyibao"
 
       - name: Install and verify Windows NSIS app
         if: runner.os == 'Windows'
@@ -160,3 +151,85 @@ jobs:
               ForEach-Object { "$($_.ProcessId):$($_.ExecutablePath)" }
             throw "Desktop app left residual processes: $($details -join ', ')"
           }
+
+      - name: Upload verified bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: shiyibao-${{ matrix.target }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish release
+    # needs 是发布闸门：三条腿里任何一条的打包或装机验证失败，这个 job 都不会执行，
+    # 产物也就不会公开。event_name 一并限定，否则用 workflow_dispatch 选中标签 ref
+    # 手动跑时也会发布，与「手动只构建」的预期不符。
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: bundles
+          merge-multiple: true
+
+      # 三个平台各自只匹配到自己的那一个 glob，合并后是扁平的三个安装包。
+      # 少一个就说明某条腿没产出，宁可在这里失败也不要发一个残缺的 Release。
+      - name: Collect artifacts
+        id: artifacts
+        run: |
+          files=()
+          while IFS= read -r found; do
+            files+=("$found")
+          done < <(find bundles -type f \( -name '*.dmg' -o -name '*.exe' \) | sort)
+          if [ "${#files[@]}" -ne 3 ]; then
+            echo "预期 3 个安装包（2 个 dmg + 1 个 exe），实际 ${#files[@]} 个：" >&2
+            [ "${#files[@]}" -gt 0 ] && printf '  %s\n' "${files[@]}" >&2
+            exit 1
+          fi
+          printf '产物清单：\n'
+          printf '  %s\n' "${files[@]}"
+          {
+            echo 'checksums<<CHECKSUMS_EOF'
+            for f in "${files[@]}"; do
+              printf '| `%s` | `%s` |\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
+            done
+            echo 'CHECKSUMS_EOF'
+          } >> "$GITHUB_OUTPUT"
+          # 标签形如 desktop-v0.1.4，展示时去掉前缀只留版本号。
+          echo "version=${GITHUB_REF_NAME#desktop-}" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "视译宝 ${{ steps.artifacts.outputs.version }}"
+          body: |
+            ## 下载说明
+
+            | 文件 | 适用平台 |
+            |------|---------|
+            | `*_aarch64.dmg` | macOS Apple Silicon (M1/M2/M3/M4) |
+            | `*_x64.dmg` | macOS Intel |
+            | `*_x64-setup.exe` | Windows 64 位 |
+
+            安装包未做代码签名：macOS 首次打开若提示「已损坏」，执行
+            `xattr -dr com.apple.quarantine /Applications/视译宝.app` 后重开；
+            Windows 会弹出 SmartScreen，选择「更多信息 → 仍要运行」。
+            应用需要本机已安装带 libass 的 FFmpeg。
+
+            ### SHA256
+
+            | 文件 | 校验和 |
+            |------|--------|
+            ${{ steps.artifacts.outputs.checksums }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            bundles/**/*.dmg
+            bundles/**/*.exe

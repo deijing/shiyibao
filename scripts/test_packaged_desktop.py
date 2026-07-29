@@ -72,7 +72,10 @@ def run(app: Path, timeout: float) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--app", type=Path, required=True)
-    parser.add_argument("--timeout", type=float, default=75.0)
+    # 必须覆盖外壳自己的重试预算（src-tauri/src/lib.rs 的 BACKEND_START_ATTEMPTS ×
+    # BACKEND_READY_TIMEOUT，当前 3 × 40 秒），否则这里会先超时，拿到的是
+    # 「报告未生成」而不是外壳写下的 status:error，排查线索全部丢失。
+    parser.add_argument("--timeout", type=float, default=210.0)
     args = parser.parse_args()
     result = run(args.app.resolve(), args.timeout)
     print(json.dumps(result, ensure_ascii=False, indent=2))
