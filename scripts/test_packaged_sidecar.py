@@ -17,6 +17,14 @@ from urllib.request import Request, urlopen
 import uuid
 
 
+def _force_utf8_output() -> None:
+    """报告是排查失败的唯一线索，不能因为 Windows 默认代码页装不下中文路径
+    而自己抛 UnicodeEncodeError。"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
@@ -349,6 +357,7 @@ def run(sidecar: Path, startup_timeout: float) -> dict:
 
 
 def main() -> int:
+    _force_utf8_output()
     parser = argparse.ArgumentParser()
     parser.add_argument("--sidecar", type=Path, required=True)
     parser.add_argument("--startup-timeout", type=float, default=75.0)

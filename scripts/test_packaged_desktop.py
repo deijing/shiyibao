@@ -12,6 +12,14 @@ import tempfile
 import time
 
 
+def _force_utf8_output() -> None:
+    """报告是排查失败的唯一线索，不能因为 Windows 默认代码页装不下中文路径
+    而自己抛 UnicodeEncodeError。"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
 def run(app: Path, timeout: float) -> dict:
     assert app.is_file(), f"desktop executable not found: {app}"
 
@@ -70,6 +78,7 @@ def run(app: Path, timeout: float) -> dict:
 
 
 def main() -> int:
+    _force_utf8_output()
     parser = argparse.ArgumentParser()
     parser.add_argument("--app", type=Path, required=True)
     # 必须覆盖外壳自己的重试预算（src-tauri/src/lib.rs 的 BACKEND_START_ATTEMPTS ×

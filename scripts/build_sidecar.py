@@ -16,6 +16,18 @@ BINARIES_DIR = ROOT / "src-tauri" / "binaries"
 BUILD_DIR = ROOT / "build" / "pyinstaller"
 SIDECAR_NAME = "shiyibao-backend"
 
+
+def _force_utf8_output() -> None:
+    """Windows 的 Python 按当前代码页编码 stdout，中文输出会直接抛
+    UnicodeEncodeError。CI runner 与 GUI 环境都不保证 UTF-8 locale，
+    而本脚本成功路径就要打印中文，必须显式兜住。"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
+_force_utf8_output()
+
 # rustc target triple 与 platform.machine() 对同一架构写法不同，归一化后才能比对。
 ARCH_ALIASES = {
     "amd64": "x86_64",

@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# Windows runner 的 Python 按当前代码页编码 stdout，pytest 输出中文断言信息时
+# 会抛 UnicodeEncodeError，把真实的测试失败原因盖掉。
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   test:
     strategy:

@@ -68,6 +68,9 @@ $env:PATH = @(
     $env:PATH
 ) -join ";"
 $env:CI = "true"
+# Python 在 Windows 上按当前代码页编码 stdout，脚本与 pytest 的中文输出会抛
+# UnicodeEncodeError，把真实错误盖掉。
+$env:PYTHONUTF8 = "1"
 
 Set-Location $buildRoot
 

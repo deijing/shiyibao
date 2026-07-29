@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# Windows runner 的 Python 按当前代码页编码 stdout，脚本与 pytest 里的中文
+# 一旦输出就抛 UnicodeEncodeError，真实错误反而被这个编码异常盖掉。
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   build:
     name: ${{ matrix.name }}
