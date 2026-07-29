@@ -20,10 +20,39 @@ def _force_utf8_output() -> None:
             stream.reconfigure(encoding="utf-8")
 
 
+def _wait_for_log_release(log_path: Path, timeout: float = 30.0) -> None:
+    """等边车真正放开日志文件句柄。
+
+    边车的 stdout 继承自这个文件，而 onefile 引导进程退出前还要删掉几百 MB 的
+    解压目录，所以主程序 wait 返回后它可能还活着几秒。Windows 不允许删除仍被
+    打开的文件，用删除成功与否正好可以判断句柄是否释放——既避免临时目录清理
+    报错，也把「边车最终退出」变成一条断言，泄漏时不会被悄悄放过。
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            log_path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"主程序退出 {timeout:.0f} 秒后边车仍持有日志文件句柄，"
+                    f"可能没有正常退出: {exc}"
+                ) from exc
+            time.sleep(0.5)
+
+
 def run(app: Path, timeout: float) -> dict:
     assert app.is_file(), f"desktop executable not found: {app}"
 
-    with tempfile.TemporaryDirectory(prefix="shiyibao-desktop-smoke-") as temp:
+    # 清理失败不该顶替真实的验证失败：Windows 上边车退出前会短暂持有日志句柄，
+    # 这件事由下面的 _wait_for_log_release 单独断言。
+    with tempfile.TemporaryDirectory(
+        prefix="shiyibao-desktop-smoke-",
+        ignore_cleanup_errors=True,
+    ) as temp:
         temp_dir = Path(temp)
         report_path = temp_dir / "desktop-smoke.json"
         log_path = temp_dir / "desktop-smoke.log"
@@ -74,6 +103,9 @@ def run(app: Path, timeout: float) -> dict:
         assert health["ffmpeg"]["available"], health["ffmpeg"]
         assert Path(health["ffmpeg"]["ffmpeg_path"]).is_file()
         assert Path(health["ffmpeg"]["ffprobe_path"]).is_file()
+
+        # 放在全部功能断言之后：功能没过时应当先报功能的问题，而不是句柄。
+        _wait_for_log_release(log_path)
         return result
 
 
