@@ -34,7 +34,10 @@ async def check_environment() -> Dict[str, Any]:
     if ffmpeg_path and ffprobe_path:
         version_str = "已找到可执行文件"
         try:
-            res = subprocess.run([ffmpeg_path, "-version"], capture_output=True, text=True, timeout=3)
+            # 探测进程要放到线程里：同步 subprocess 会把事件循环连带任务状态轮询一起卡住。
+            res = await asyncio.to_thread(
+                subprocess.run, [ffmpeg_path, "-version"], capture_output=True, text=True, timeout=3
+            )
             if res.returncode == 0:
                 first_line = res.stdout.splitlines()[0]
                 version_str = first_line.split(" Copyright")[0]
@@ -79,8 +82,11 @@ async def check_environment() -> Dict[str, Any]:
     else:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={gemini_key}"
-                resp = await client.get(url)
+                # key 只走请求头：写在 query string 里会被 httpx 日志与任何中间代理原样记下来。
+                resp = await client.get(
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    headers={"x-goog-api-key": gemini_key},
+                )
                 if resp.status_code == 200:
                     checks.append({
                         "id": "gemini_api",

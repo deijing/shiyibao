@@ -26,6 +26,44 @@ TARGET_UTTERANCE_SECONDS = 5.5
 MAX_UTTERANCE_CHARS = 60
 MAX_JOIN_GAP_SECONDS = 0.6
 SENTENCE_ENDINGS = ("。", "！", "？", "!", "?", "…")
+RESPONSE_SNIPPET_CHARS = 300
+
+
+class TtsResponseError(RuntimeError):
+    """MiMo 返回了 HTTP 200 但结构里没有音频（内容审核、配额提示等）。"""
+
+
+def _response_snippet(resp: httpx.Response) -> str:
+    """截断后的响应体，用于定位审核/配额提示；正常响应里的整段 base64 不该进日志。"""
+    body = " ".join((resp.text or "").split())
+    if len(body) > RESPONSE_SNIPPET_CHARS:
+        return f"{body[:RESPONSE_SNIPPET_CHARS]}…(已截断)"
+    return body
+
+
+def _extract_audio_bytes(resp: httpx.Response) -> bytes:
+    """取出 MiMo 响应中的音频数据。
+
+    裸取 data["choices"][0]["message"]["audio"]["data"] 时，一旦上游改返内容审核或配额
+    结果，用户只会看到一个孤零零的字段名，因此这里统一转成带状态码与响应片段的异常。
+    """
+    try:
+        audio_b64 = resp.json()["choices"][0]["message"]["audio"]["data"]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise TtsResponseError(
+            f"HTTP {resp.status_code} 响应中没有音频数据 ({exc!r})，响应片段: {_response_snippet(resp)}"
+        ) from exc
+    try:
+        audio = base64.b64decode(audio_b64)
+    except (ValueError, TypeError) as exc:
+        raise TtsResponseError(
+            f"HTTP {resp.status_code} 音频数据无法解码 ({exc})，响应片段: {_response_snippet(resp)}"
+        ) from exc
+    if not audio:
+        raise TtsResponseError(
+            f"HTTP {resp.status_code} 音频数据为空，响应片段: {_response_snippet(resp)}"
+        )
+    return audio
 
 
 def _get_wav_duration(path: Path) -> float:
@@ -216,8 +254,8 @@ async def synthesize_all(
             if wav_path.exists() and wav_path.stat().st_size > 100:
                 return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
 
-            async with tts_limiter.slot():
-                for attempt in range(MAX_RETRIES):
+            for attempt in range(MAX_RETRIES):
+                async with tts_limiter.slot():
                     try:
                         resp = await client.post(
                             MIMO_API_URL,
@@ -227,30 +265,49 @@ async def synthesize_all(
                         if resp.status_code == 429 or resp.status_code >= 500:
                             raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
                         resp.raise_for_status()
-                        data = resp.json()
-                        audio_b64 = data["choices"][0]["message"]["audio"]["data"]
-                        wav_path.write_bytes(base64.b64decode(audio_b64))
+                        wav_path.write_bytes(_extract_audio_bytes(resp))
                         if log_cb:
                             source_range = seg.get("source_indices", [seg.get("index", idx_0)])
                             log_cb("音色合成", f"语义段 [{idx_0 + 1}/{total_count}] (原字幕 {source_range[0] + 1}-{source_range[-1] + 1}) \"{text}\" 合成成功 (音色: {voice}, 格式: 44.1kHz WAV)", "api")
                         return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
-                    except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError) as exc:
+                    except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError, TtsResponseError) as exc:
+                        # 异常响应结构往往是上游偶发抖动，重试一次通常就正常了。
+                        detail = (
+                            f"MiMo 未返回音频，可能触发内容审核或额度不足 → {exc}"
+                            if isinstance(exc, TtsResponseError) else str(exc)
+                        )
                         if attempt == MAX_RETRIES - 1:
                             if log_cb:
-                                log_cb("音色合成", f"句 [{idx_0 + 1}/{total_count}] 合成失败: {exc}", "error")
-                            raise RuntimeError(f"MiMo TTS 段落 {seg['index']} 合成失败 (已重试 {MAX_RETRIES} 次): {exc}") from exc
+                                log_cb("音色合成", f"句 [{idx_0 + 1}/{total_count}] 合成失败: {detail}", "error")
+                            raise RuntimeError(f"MiMo TTS 段落 {seg['index']} 合成失败 (已重试 {MAX_RETRIES} 次): {detail}") from exc
                         wait = RETRY_BACKOFF_BASE ** (attempt + 1)
-                        logger.warning("MiMo TTS 第 %d 次重试 (段落 %d)，等待 %.1fs: %s", attempt + 1, seg["index"], wait, exc)
+                        logger.warning("MiMo TTS 第 %d 次重试 (段落 %d)，等待 %.1fs: %s", attempt + 1, seg["index"], wait, detail)
                         if log_cb:
                             log_cb("音色合成", f"合成重试中 [{attempt + 1}/{MAX_RETRIES}] (句 {idx_0 + 1})...", "api")
-                        await asyncio.sleep(wait)
+
+                # 退避等待放在并发槽之外，否则纯睡眠期间会白占一个 TTS 额度。
+                await asyncio.sleep(wait)
 
             return None
 
-        results = await asyncio.gather(*(
-            synthesize_segment(idx_0, seg)
+        # 首个异常就停：Key 失效之类的错误对每一段都会复现，等上百段各自耗尽三次
+        # 重试要拖好几分钟。取消其余任务并等它们收尾，避免留下仍在吃额度的孤儿请求。
+        tasks = [
+            asyncio.create_task(synthesize_segment(idx_0, seg))
             for idx_0, seg in enumerate(utterances)
-        ))
+        ]
+        if tasks:
+            _done, unfinished = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_EXCEPTION
+            )
+            for task in unfinished:
+                task.cancel()
+            if unfinished:
+                await asyncio.gather(*unfinished, return_exceptions=True)
+            for task in tasks:
+                if not task.cancelled() and task.exception() is not None:
+                    raise task.exception()
+        results = [task.result() for task in tasks]
 
     rendered = sorted(
         (item for item in results if item is not None),

@@ -10,7 +10,6 @@ from ..performance import get_performance_settings, translate_limiter
 
 logger = logging.getLogger(__name__)
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2.0
 
@@ -82,7 +81,7 @@ async def translate_subtitles(
             "clearly continues into the next item. Never add line breaks inside an item."
         )
     clean_model = (gemini_model or "gemini-2.0-flash").replace("models/", "")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={gemini_api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
 
     performance = get_performance_settings()
     batch_size = performance.translate_batch_size
@@ -96,6 +95,8 @@ async def translate_subtitles(
     ]
     async with httpx.AsyncClient(
         timeout=120.0,
+        # key 只走请求头：写在 query string 里会被 httpx 日志与任何中间代理原样记下来。
+        headers={"x-goog-api-key": gemini_api_key},
         limits=httpx.Limits(
             max_connections=performance.translate_concurrency,
             max_keepalive_connections=performance.translate_concurrency,
@@ -134,7 +135,12 @@ async def translate_subtitles(
                         if log_cb:
                             log_cb("AI 翻译", f"触发速率限制/网络波动，第 {attempt + 1} 次重试中 (等待 {wait:.1f}s)...", "api")
                         await asyncio.sleep(wait)
-                    except (KeyError, IndexError, json.JSONDecodeError):
+                    except (KeyError, IndexError, json.JSONDecodeError) as exc:
+                        # 结构异常多半是内容安全拦截或配额提示，重试无用；但必须留下原因，
+                        # 否则这一批只会静默回落成原文。
+                        logger.error("Gemini 响应结构异常，本批未翻译: %s", exc)
+                        if log_cb:
+                            log_cb("AI 翻译", f"Gemini 返回内容无法解析，本批未翻译: {exc}", "error")
                         break
 
             return batch_start, batch, translations
@@ -144,16 +150,36 @@ async def translate_subtitles(
             for batch_start, batch in batches
         ))
 
+        fallback_count = 0
         for batch_start, batch, translations in sorted(results, key=lambda item: item[0]):
             for i, seg in enumerate(batch):
                 idx = batch_start + i + 1
-                if i < len(translations) and translations[i]:
-                    seg["translated_text"] = str(translations[i])
-                else:
-                    seg["translated_text"] = seg["source_text"]
+                translated = str(translations[i]) if i < len(translations) and translations[i] else ""
+                if translated:
+                    seg["translated_text"] = translated
+                    # 显式写 False：重跑时会复用同一批 segments，上一轮的回落标记不能残留。
+                    seg["translated_fallback"] = False
+                    if log_cb:
+                        log_cb("AI 翻译", f"句 [{idx}/{len(pending)}] 翻译完成: \"{seg['source_text']}\" ➔ \"{seg['translated_text']}\"", "api")
+                    continue
 
-                if log_cb:
-                    log_cb("AI 翻译", f"句 [{idx}/{len(pending)}] 翻译完成: \"{seg['source_text']}\" ➔ \"{seg['translated_text']}\"", "api")
+                # 回落到原文。下游（task.py）靠 translated_fallback 判断是报错还是告警，
+                # 空白原文本来就没有可译内容，不计入回落。
+                is_fallback = bool(str(seg["source_text"]).strip())
+                seg["translated_text"] = seg["source_text"]
+                seg["translated_fallback"] = is_fallback
+                if is_fallback:
+                    fallback_count += 1
+                    if log_cb:
+                        log_cb("AI 翻译", f"句 [{idx}/{len(pending)}] 未翻译，已保留原文: \"{seg['source_text']}\"", "error")
+
+        if fallback_count and log_cb:
+            log_cb(
+                "AI 翻译",
+                f"共 {len(pending)} 条字幕中有 {fallback_count} 条未翻译，已保留原文，"
+                "请检查 Gemini Key、模型配额与网络后重试",
+                "error",
+            )
 
     out_path = task_dir / f"subtitles_{target_lang}.json"
     out_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -200,8 +226,7 @@ async def summarize_video_title(
 
     model_name = gemini_model or "gemini-2.0-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-    headers = {"Content-Type": "application/json"}
-    params = {"key": gemini_api_key}
+    headers = {"Content-Type": "application/json", "x-goog-api-key": gemini_api_key}
 
     prompt = (
         "你是一个专业精炼的视频内容编辑。请根据以下视频开篇字幕内容，总结出一个吸引人且准确描述核心内容的视频中文标题（长度控制在 6-16 字以内）。"
@@ -216,7 +241,7 @@ async def summarize_video_title(
 
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(url, json=payload, headers=headers, params=params)
+            resp = await client.post(url, json=payload, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
                 text = data["candidates"][0]["content"]["parts"][0]["text"].strip()

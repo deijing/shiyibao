@@ -5,9 +5,39 @@ import sys
 
 from dotenv import load_dotenv
 
-# 从项目级 .env 文件加载环境变量
 BASE_DIR = Path(__file__).parent.parent
-load_dotenv(BASE_DIR / ".env")
+
+
+def _dotenv_dirs() -> list[Path]:
+    """返回 .env 的查找目录，按优先级从高到低。"""
+    directories: list[Path] = []
+    if getattr(sys, "frozen", False):
+        directories.append(Path(sys.executable).resolve().parent)
+
+    data_dir = os.getenv("SHIYIBAO_DATA_DIR", "").strip()
+    if data_dir:
+        directories.append(Path(data_dir).expanduser())
+
+    directories.append(BASE_DIR)
+    return directories
+
+
+def _load_dotenv_file() -> None:
+    """加载首个存在的 .env 文件。
+
+    PyInstaller onefile 模式下 __file__ 指向临时解包目录，仓库根目录在桌面版里
+    根本不存在，只看那一处会让用户放到程序旁边或数据目录里的 .env 完全失效。
+    这里保持 load_dotenv 默认的「不覆盖已有环境变量」语义，避免 .env 里的旧值
+    盖掉 Tauri 注入的 SHIYIBAO_ 系列运行时参数。
+    """
+    for directory in _dotenv_dirs():
+        candidate = directory / ".env"
+        if candidate.is_file():
+            load_dotenv(candidate)
+            return
+
+
+_load_dotenv_file()
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:

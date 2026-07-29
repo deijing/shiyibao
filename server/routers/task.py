@@ -1,9 +1,8 @@
 import asyncio
 from contextlib import suppress
 from datetime import datetime, timezone
-import hmac
 import json
-import os
+import logging
 import shutil
 from pathlib import Path
 import uuid
@@ -13,6 +12,7 @@ from filelock import FileLock
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 
+from .. import security
 from ..config import MIMO_API_KEY, TASKS_DIR, UPLOADS_DIR
 from ..models import (
     RegisterLocalRequest,
@@ -26,33 +26,26 @@ from ..models import (
     UploadResponse,
 )
 
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".flv", ".webm"}
+logger = logging.getLogger(__name__)
 
-_LOCAL_UI_ORIGINS = (
-    "http://127.0.0.1",
-    "http://localhost",
-    "https://127.0.0.1",
-    "https://localhost",
-    "tauri://",
-    "http://tauri.localhost",
-    "https://tauri.localhost",
-)
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".flv", ".webm"}
 
 
 def _guard_local_fs(request: Request) -> None:
-    """阻止恶意网页跨域调用本地目录扫描 / 路径注册接口。"""
-    expected = os.getenv("SHIYIBAO_LOCAL_TOKEN", "").strip()
-    provided = (request.headers.get("x-shiyibao-local-token") or "").strip()
-    if expected and provided and hmac.compare_digest(provided, expected):
+    """阻止恶意网页跨域调用本地目录扫描 / 路径注册接口。
+
+    全局中间件已经拦过一遍，这里保留同样的判定作为第二道防线：这两个接口能
+    读取任意目录、把任意文件登记成任务，即使中间件被绕过也不能放行。
+    """
+    if security.local_token_matches(request.headers.get(security.LOCAL_TOKEN_HEADER)):
         return
 
-    origin = (request.headers.get("origin") or "").strip()
-    referer = (request.headers.get("referer") or "").strip()
-    source = origin or referer
-    if source:
-        if any(source.startswith(prefix) for prefix in _LOCAL_UI_ORIGINS):
-            return
-        raise HTTPException(status_code=403, detail="禁止跨域访问本地文件接口")
+    # 主机名必须完整匹配，避免 localhost.attacker.com 这类前缀伪装。
+    for value in (request.headers.get("origin"), request.headers.get("referer")):
+        if (value or "").strip():
+            if security.is_local_ui_origin(value):
+                return
+            raise HTTPException(status_code=403, detail="禁止跨域访问本地文件接口")
 
     client_host = request.client.host if request.client else ""
     if client_host in {"127.0.0.1", "::1", "localhost", "testclient"}:
@@ -310,6 +303,25 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             task_dir, segments, req.gemini_api_key, req.target_lang, req.gemini_model,
             source_lang=source_lang, log_cb=log_cb,
         )
+
+        # 翻译失败的分段会被回落成原文，配出来的音听着像「给原文配了音」。
+        # 静默走到 complete 等于骗用户，这里必须让失败可见。
+        # 只统计本轮真正送去翻译的分段：translate 侧仅对这些分段写 translated_fallback
+        # （成功 False / 失败 True），所以 skip_translated 复用旧译文时口径也不会跑偏。
+        attempted = [seg for seg in segments if "translated_fallback" in seg]
+        fallback_count = sum(1 for seg in attempted if seg["translated_fallback"])
+        total_segments = len(attempted)
+        # 先落盘再判失败，否则全片失败的任务反而查不到计数。
+        _update_meta(task_id, translation_fallback_count=fallback_count,
+                     translation_total=total_segments)
+        if total_segments > 0 and fallback_count == total_segments:
+            raise RuntimeError(
+                "Gemini 翻译全部失败，字幕仍是原文，已终止任务。"
+                "请检查 Gemini API Key、账号配额与网络连通性后重试"
+            )
+        if fallback_count:
+            log_cb("AI 翻译", f"⚠️ 有 {fallback_count}/{total_segments} 条字幕翻译失败，"
+                             f"这些分段将保留原文并按原文配音，建议稍后重试整片转译。", "error")
         log_cb("AI 翻译", "Gemini 深度上下文润色与全片字幕翻译完成", "success")
 
         # 智能总结视频标题
@@ -319,7 +331,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                 _update_meta(task_id, video_title=video_title)
                 log_cb("AI 翻译", f"智能生成视频标题: \"{video_title}\"", "info")
         except Exception as e:
-            logger.warning("Failed to generate video title: %s", e)
+            logger.warning("生成视频标题失败: %s", e)
 
         if req.stream_mode != "batch" and len(segments) > 0:
             # ---- 真正的增量流式渲染 ----
@@ -428,7 +440,13 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
     except Exception as exc:  # noqa: BLE001 - 将所有失败反馈给客户端
         err_msg = str(exc)
         _update_meta(task_id, stage=TaskStage.ERROR.value, message="处理失败", error=err_msg)
-        log_cb("网络错误" if "429" in err_msg or "http" in err_msg.lower() else "系统报错", f"Client error '{err_msg}'", "error")
+        # 这里既可能是外部接口报错，也可能是本地流程异常，文案不要一律写成客户端错误。
+        is_network = "429" in err_msg or "http" in err_msg.lower()
+        log_cb(
+            "网络错误" if is_network else "系统报错",
+            f"{'调用外部接口失败' if is_network else '转译流程异常终止'}：{err_msg}",
+            "error",
+        )
 
 
 async def _run_pipeline(task_id: str, req: TaskStartRequest) -> None:
@@ -575,8 +593,15 @@ def range_file_response(path: Path, request: Request, media_type: str = "video/m
             return FileResponse(str(path), media_type=media_type)
         # 仅处理单一 range（播放器常见形态）。
         start_str, end_str = ranges.split("-", 1)
-        start = int(start_str) if start_str else 0
-        end = int(end_str) if end_str else file_size - 1
+        if not start_str.strip():
+            # bytes=-N 是后缀 range，取文件末尾 N 字节；播放器就是靠它探测
+            # MP4 尾部的 moov atom，按 start=0 处理会喂回文件开头的错数据。
+            suffix_length = min(int(end_str), file_size)
+            start = max(0, file_size - suffix_length)
+            end = file_size - 1
+        else:
+            start = int(start_str)
+            end = int(end_str) if end_str else file_size - 1
         if file_size <= 0 or start < 0 or start >= file_size or end < start:
             return Response(
                 status_code=416,
