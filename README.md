@@ -113,7 +113,18 @@ GEMINI_API_KEY=你的_Gemini_Key
 MIMO_API_KEY=你的_MiMo_Key
 ```
 
-也可以启动后在“设置”中填写密钥。`.env`、浏览器本地存储和用户数据目录中的 `workspace/user_settings.json` 都可能保存密钥；不要分享这些文件，也不要将它们提交到 Git。仓库不包含任何默认密钥。
+后端按以下顺序查找 `.env`，命中第一个存在的文件后停止：
+
+1. 可执行文件所在目录（仅 PyInstaller 打包后的边车生效）
+2. `SHIYIBAO_DATA_DIR` 指向的根数据目录（桌面版由 Tauri 注入）
+3. 仓库根目录
+
+源码方式运行时放在仓库根目录即可。桌面安装包建议放在根数据目录下、与 `workspace/` 同级
+（具体路径见“使用流程”一节），例如 macOS 的
+`~/Library/Application Support/com.shiyibao.desktop/.env`；放在这里不会被应用更新覆盖。
+`.env` 不覆盖已存在的环境变量，因此 Tauri 注入的 `SHIYIBAO_*` 运行参数不会被旧值顶掉。
+
+也可以启动后在“设置”中填写密钥，保存时会写入根数据目录下的 `workspace/user_settings.json`，前端另在浏览器本地存储缓存一份。这三处都可能保存密钥；不要分享这些文件，也不要将它们提交到 Git。仓库不包含任何默认密钥。
 
 ## 启动
 
@@ -178,14 +189,19 @@ npm run tauri -- build
 内置模式应使用可再分发的静态 FFmpeg/ffprobe 构建，并确保其许可证适合你的分发方式。
 
 macOS 与 Windows 不能用这套链路直接交叉生成安装包。`.github/workflows/desktop.yml`
-提供原生 runner 矩阵，可在 GitHub Actions 中手动运行，或推送 `desktop-v*` 标签，
-分别产出 DMG 和 EXE 工作流制品。
+提供原生 runner 矩阵（macOS ARM64、macOS x86_64、Windows x86_64），可在 GitHub Actions
+中手动运行，或推送 `desktop-v*` 标签触发，分别产出 DMG 和 EXE。
 
-桌面出包工作流会在上传产物前执行两层运行验证：先直接启动 PyInstaller
-边车完成上传、目录扫描、Range 播放与 FFmpeg 缩略图等接口测试；再启动打包后的
-Tauri 主程序并等待其动态端口 `/api/health` 就绪。Windows 任务会先静默安装
-NSIS EXE，再从安装目录启动应用，因此工作流成功不仅代表编译通过，也代表
-安装后的主程序能够创建窗口、拉起边车并定位 FFmpeg。
+工作流内的顺序是：后端 pytest 与前端 lint / build → 构建 PyInstaller 边车 → 直接启动
+边车完成上传、目录扫描、Range 播放与 FFmpeg 缩略图等接口测试 → `cargo check` → 打包
+DMG / NSIS EXE → 启动打包后的 Tauri 主程序并等待其动态端口 `/api/health` 就绪 → 上传
+工作流制品。Windows 任务会先静默安装 NSIS EXE 再从安装目录启动，并检查退出后没有残留
+进程，因此这条腿通过不仅代表编译通过，也代表安装后的主程序能够创建窗口、拉起边车、
+定位 FFmpeg 并干净退出。
+
+发布 Release 由独立的 `release` job 完成：它依赖全部三条构建腿成功，且只在 ref 为标签时
+运行，手动触发分支只会得到工作流制品。构建 job 的 `permissions` 仅 `contents: read`，写
+权限只授予 `release` job，所以任何一条腿的验证失败都不会有安装包被公开发布。
 
 ## 使用流程
 
@@ -269,7 +285,18 @@ npm run lint
 npm run build
 ```
 
-前端 lint 当前可能报告 Fast Refresh 的非阻断警告；构建失败或 lint 错误会使命令返回非零状态。CI 会在 Windows、macOS 和 Ubuntu 上执行同样的检查。
+桌面外壳的 Rust 检查：
+
+```bash
+cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+cargo check --manifest-path src-tauri/Cargo.toml --locked
+```
+
+`cargo check` 需要先有 `app/dist`（前端产物在编译期被嵌入二进制）和
+`src-tauri/binaries/shiyibao-backend-<target-triple>[.exe]`（`tauri-build` 会复制
+`externalBin`，文件缺失直接编译失败）。只做编译检查时空占位文件就够用，CI 即如此处理。
+
+前端 lint 当前可能报告 Fast Refresh 的非阻断警告；构建失败或 lint 错误会使命令返回非零状态。CI 会在 Windows、macOS 和 Ubuntu 上执行上述 Python 与前端检查，并在 Windows 上单独跑一遍 Rust 的格式与编译检查。
 
 ## 常用 API
 
@@ -306,6 +333,13 @@ npm run build
 
 检查密钥、账户额度、代理和网络区域；然后降低翻译 / TTS 并发。应用对 429 和部分服务端错误会自动重试三次。
 
+### 日志提示字幕未翻译
+
+Gemini 请求失败的分段会回落成原文，字幕和配音都会停留在原声语言。全片都失败时任务直接标记为失败，
+提示检查 Key、配额与网络；只有部分失败时任务会继续跑完，日志会逐条列出未翻译的句子并给出
+“N/M 条未翻译”的汇总，任务目录的 `task.json` 也会记下 `translation_fallback_count` 与
+`translation_total`。两种情况都建议修好密钥或网络后重跑整片，而不是直接使用结果。
+
 ### 端口被占用
 
 默认端口为前端 `5173`、后端 `8000`。先关闭占用端口的旧进程，再重新运行启动器。
@@ -313,6 +347,10 @@ npm run build
 ## 安全说明
 
 - 服务默认只监听 `127.0.0.1`，不要在不可信网络中改为 `0.0.0.0`。
+- `/api/*` 接口带来源校验：请求携带 `Origin` 或 `Referer` 时，其主机名必须精确等于 `127.0.0.1`、`::1`、`localhost` 或 `tauri.localhost`，否则返回 403；桌面版另有 Tauri 每次启动随机生成的 token，前端通过 `X-Shiyibao-Local-Token` 头带上，token 正确即通过。
+- 这条校验防的是浏览器里打开的第三方网页向本机端口发请求、读 `/api/settings` 拿走 Gemini 与 MiMo 密钥（浏览器不允许网页伪造这两个头）。它不防同机上的其他本地程序：不带 `Origin`/`Referer` 的请求（curl、脚本）仍会放行。
+- `/api/health` 不参与来源校验，因为 Tauri 外壳与打包冒烟脚本要在注入 token 之前轮询它确认后端就绪；它只返回 FFmpeg 路径与数据目录，不含密钥。`/api/shutdown` 也不走这条校验，它自带独立的 shutdown token。
+- 任务产物只能经 `/api/task/{id}/...` 读取，没有把工作目录整体静态挂载出去的路由。
 - 上传的视频、字幕、音频、日志和设置均保存在本机用户数据目录。
 - 音频和文本会发送至第三方 ASR、Gemini 与 MiMo 服务；使用前请确认素材授权与相应服务条款。
 - 本项目没有用户认证，不适合直接暴露到公网。
@@ -320,7 +358,9 @@ npm run build
 ## 已知限制
 
 - BcutASR 为第三方封装的云端识别服务，上游接口变化可能导致识别不可用。
-- 桌面安装包尚未配置 Apple/Windows 代码签名；公开分发前需补齐签名与公证。
+- macOS 产物只做 ad-hoc 签名（`src-tauri/tauri.macos.conf.json` 中 `signingIdentity` 为 `-`、`hardenedRuntime` 为 `false`），没有 Developer ID 签名与公证。从网络下载的 DMG 会被 Gatekeeper 拦下，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，或先去掉隔离标记：`xattr -dr com.apple.quarantine /Applications/视译宝.app`。
+- 要做公证必须改为 Developer ID 签名并把 `hardenedRuntime` 打开，同时为 PyInstaller 边车配置 entitlements——onefile 边车在运行时加载自己解包出来的动态库，至少需要 `com.apple.security.cs.disable-library-validation`。
+- Windows NSIS 安装包同样未签名，首次运行会触发 SmartScreen 提示。
 - 超长视频会消耗大量磁盘空间、网络流量和编码时间。
 - 处理结果质量取决于原视频音质、翻译模型、TTS 服务和字体环境。
 
