@@ -86,7 +86,7 @@ async def detect_language_with_gemini(text: str, gemini_api_key: str, model_name
         return None
 
     clean_model = (model_name or "gemini-2.0-flash").replace("models/", "")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={gemini_api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
 
     system_instruction = (
         "You are an expert language identifier. Analyze the given text and determine its primary spoken/written language. "
@@ -103,7 +103,10 @@ async def detect_language_with_gemini(text: str, gemini_api_key: str, model_name
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        # key 只走请求头：写在 query string 里会被 httpx 日志与任何中间代理原样记下来。
+        async with httpx.AsyncClient(
+            timeout=10.0, headers={"x-goog-api-key": gemini_api_key}
+        ) as client:
             resp = await client.post(url, json=body)
             if resp.status_code == 200:
                 data = resp.json()

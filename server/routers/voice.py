@@ -77,8 +77,9 @@ async def test_gemini_key(req: KeyTestRequest):
     if not key:
         raise HTTPException(status_code=400, detail="Gemini API Key 不能为空")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+    # key 只走请求头：写在 query string 里会被 httpx 日志与任何中间代理原样记下来。
+    async with httpx.AsyncClient(timeout=10.0, headers={"x-goog-api-key": key}) as client:
         try:
             resp = await client.get(url)
             if resp.status_code == 200:
@@ -104,8 +105,8 @@ async def get_gemini_models(req: KeyTestRequest):
     if not key:
         raise HTTPException(status_code=400, detail="Gemini API Key 不能为空")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+    async with httpx.AsyncClient(timeout=15.0, headers={"x-goog-api-key": key}) as client:
         try:
             resp = await client.get(url)
             if resp.status_code == 200:

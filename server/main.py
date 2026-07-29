@@ -7,12 +7,18 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 from .config import APP_DATA_DIR, TASKS_DIR, UPLOADS_DIR, WORKSPACE_DIR
 from .routers import env, performance, settings, task, upload, voice
+from .security import (
+    CORS_ORIGIN_REGEX,
+    LOCAL_TOKEN_HEADER,
+    PUBLIC_API_PATHS,
+    request_source_is_trusted,
+)
 from .services.audio import find_media_binary
 
 logger = logging.getLogger(__name__)
@@ -53,11 +59,38 @@ app = FastAPI(title="视译宝 ShiYiBao API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["content-type", "range", LOCAL_TOKEN_HEADER],
+    # 播放器要读 content-range/accept-ranges 才能 seek，下载要读 content-disposition 取文件名。
+    expose_headers=["content-range", "accept-ranges", "content-disposition"],
 )
+
+
+# 注册在 CORS 之后，Starlette 里后注册的中间件位于更外层，这样连 OPTIONS 预检
+# 都会被判定，恶意网页拿不到任何可用的 CORS 响应头。
+#
+# /api/health 必须留在白名单里：Tauri 外壳（src-tauri/src/lib.rs）与
+# scripts/test_packaged_desktop.py 都要在注入 local token 之前轮询它确认后端就绪，
+# 拦住它桌面端就永远等不到启动完成。代价是任意网页都能读到 FFmpeg 路径与数据
+# 目录，属于本机环境信息而非凭据，权衡后接受。
+@app.middleware("http")
+async def guard_api_origin(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path not in PUBLIC_API_PATHS:
+        trusted = request_source_is_trusted(
+            local_token=request.headers.get(LOCAL_TOKEN_HEADER),
+            origin=request.headers.get("origin"),
+            referer=request.headers.get("referer"),
+        )
+        if not trusted:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "禁止从非本机界面访问本地接口"},
+            )
+    return await call_next(request)
+
 
 app.include_router(upload.router, prefix="/api")
 app.include_router(task.router, prefix="/api")
@@ -119,10 +152,6 @@ async def shutdown(
         raise HTTPException(status_code=403, detail="Forbidden")
     background_tasks.add_task(_exit_process)
     return {"status": "shutting_down"}
-
-
-# 直接从任务工作区提供生成的产物（音频/视频）。
-app.mount("/files", StaticFiles(directory=str(TASKS_DIR)), name="files")
 
 
 def _server_port() -> int:
