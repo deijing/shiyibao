@@ -23,14 +23,24 @@ export function apiUrl(path: string): string {
   return `${API_BASE}${normalizedPath}`
 }
 
-function localFsHeaders(extra?: HeadersInit): HeadersInit {
+/**
+ * 所有 API 请求的统一出口：拼接基址，并带上桌面端注入的一次性 token。
+ * 浏览器开发模式没有 token，此时后端靠 Origin 主机名白名单放行。
+ *
+ * Content-Type 只在 body 是 JSON 字符串时补齐——uploadVideo 传的是 FormData，
+ * 手动设置会破坏 multipart 的 boundary。
+ */
+function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  if (typeof init?.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
   const token =
     typeof window !== 'undefined' ? window.__SHIYIBAO_LOCAL_TOKEN__ : undefined
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { 'X-Shiyibao-Local-Token': token } : {}),
-    ...extra,
+  if (token) {
+    headers.set('X-Shiyibao-Local-Token', token)
   }
+  return fetch(apiUrl(path), { ...init, headers })
 }
 
 export interface UploadResponse {
@@ -162,28 +172,27 @@ function normalizeTaskStatus(status: TaskStatus): TaskStatus {
 export async function uploadVideo(file: File): Promise<UploadResponse> {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await fetch(apiUrl('/api/upload'), { method: 'POST', body: formData })
+  const res = await apiFetch('/api/upload', { method: 'POST', body: formData })
   if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`)
   return res.json()
 }
 
 export async function startTask(taskId: string, config: TaskStartConfig): Promise<void> {
-  const res = await fetch(apiUrl(`/api/task/${taskId}/start`), {
+  const res = await apiFetch(`/api/task/${taskId}/start`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
   })
   if (!res.ok) throw new Error(`Start failed: ${res.statusText}`)
 }
 
 export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
-  const res = await fetch(apiUrl(`/api/task/${taskId}/status`))
+  const res = await apiFetch(`/api/task/${taskId}/status`)
   if (!res.ok) throw new Error(`Status check failed: ${res.statusText}`)
   return normalizeTaskStatus(await res.json())
 }
 
 export async function getSubtitles(taskId: string): Promise<SubtitleSegment[]> {
-  const res = await fetch(apiUrl(`/api/task/${taskId}/subtitles`))
+  const res = await apiFetch(`/api/task/${taskId}/subtitles`)
   if (!res.ok) throw new Error(`Subtitles fetch failed: ${res.statusText}`)
   return res.json()
 }
@@ -205,13 +214,13 @@ export function getThumbnailUrl(taskId: string): string {
 }
 
 export async function getTaskList(): Promise<TaskListItem[]> {
-  const res = await fetch(apiUrl('/api/tasks'))
+  const res = await apiFetch('/api/tasks')
   if (!res.ok) throw new Error(`Task list failed: ${res.statusText}`)
   return res.json()
 }
 
 export async function getPerformanceSettings(): Promise<PerformanceResponse> {
-  const res = await fetch(apiUrl('/api/performance'))
+  const res = await apiFetch('/api/performance')
   if (!res.ok) throw new Error(`Performance settings failed: ${res.statusText}`)
   return res.json()
 }
@@ -219,9 +228,8 @@ export async function getPerformanceSettings(): Promise<PerformanceResponse> {
 export async function updatePerformanceSettings(
   settings: PerformanceSettings,
 ): Promise<PerformanceResponse> {
-  const res = await fetch(apiUrl('/api/performance'), {
+  const res = await apiFetch('/api/performance', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
   })
   if (!res.ok) throw new Error(`Performance update failed: ${res.statusText}`)
@@ -229,12 +237,12 @@ export async function updatePerformanceSettings(
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/task/${taskId}`), { method: 'DELETE' })
+  const res = await apiFetch(`/api/task/${taskId}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`Task delete failed: ${res.statusText}`)
 }
 
 export async function getTaskLogs(taskId: string): Promise<TaskLogItem[]> {
-  const res = await fetch(apiUrl(`/api/task/${taskId}/logs`))
+  const res = await apiFetch(`/api/task/${taskId}/logs`)
   if (!res.ok) return []
   return res.json()
 }
@@ -244,7 +252,7 @@ export function getVoicePreviewUrl(voiceName: string): string {
 }
 
 export async function getRuntimeHealth(): Promise<RuntimeHealth> {
-  const res = await fetch(apiUrl('/api/health'))
+  const res = await apiFetch('/api/health')
   if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`)
   return res.json()
 }
@@ -254,9 +262,8 @@ export async function fetchGeminiModels(apiKey: string): Promise<GeminiModelItem
     throw new Error('Gemini API Key 不能为空，请先输入密钥')
   }
 
-  const res = await fetch(apiUrl('/api/models/gemini'), {
+  const res = await apiFetch('/api/models/gemini', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api_key: apiKey.trim() }),
   })
   const data = await res.json()
@@ -272,9 +279,8 @@ export async function testGeminiKey(apiKey: string): Promise<{ success: boolean;
   }
 
   try {
-    const res = await fetch(apiUrl('/api/test/gemini'), {
+    const res = await apiFetch('/api/test/gemini', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey.trim() }),
     })
     const data = await res.json()
@@ -299,9 +305,8 @@ export async function testXiaomiKey(apiKey: string): Promise<{ success: boolean;
   }
 
   try {
-    const res = await fetch(apiUrl('/api/test/xiaomi'), {
+    const res = await apiFetch('/api/test/xiaomi', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey.trim() }),
     })
     const data = await res.json()
@@ -322,7 +327,7 @@ export async function testXiaomiKey(apiKey: string): Promise<{ success: boolean;
 
 export async function fetchServerSettings(): Promise<Record<string, any>> {
   try {
-    const res = await fetch(apiUrl('/api/settings'))
+    const res = await apiFetch('/api/settings')
     if (res.ok) {
       return await res.json()
     }
@@ -334,9 +339,8 @@ export async function fetchServerSettings(): Promise<Record<string, any>> {
 
 export async function saveServerSettings(settings: Record<string, any>): Promise<void> {
   try {
-    await fetch(apiUrl('/api/settings'), {
+    await apiFetch('/api/settings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     })
   } catch {
@@ -362,9 +366,8 @@ export async function scanDirectory(inputDir: string): Promise<ScanDirectoryResp
     throw new Error('输入文件夹路径不能为空')
   }
 
-  const res = await fetch(apiUrl('/api/scan-directory'), {
+  const res = await apiFetch('/api/scan-directory', {
     method: 'POST',
-    headers: localFsHeaders(),
     body: JSON.stringify({ input_dir: inputDir.trim() }),
   })
   const data = await res.json()
@@ -377,9 +380,8 @@ export async function registerLocalTask(
   inputFilePath: string,
   outputDir?: string,
 ): Promise<UploadResponse> {
-  const res = await fetch(apiUrl('/api/task/register-local'), {
+  const res = await apiFetch('/api/task/register-local', {
     method: 'POST',
-    headers: localFsHeaders(),
     body: JSON.stringify({
       input_file_path: inputFilePath,
       output_dir: outputDir || undefined,
@@ -412,7 +414,7 @@ export interface EnvCheckResult {
 }
 
 export async function checkEnvironment(): Promise<EnvCheckResult> {
-  const res = await fetch(apiUrl('/api/environment/check'))
+  const res = await apiFetch('/api/environment/check')
   if (!res.ok) {
     throw new Error('环境检测服务连通失败')
   }

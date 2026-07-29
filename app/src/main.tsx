@@ -51,8 +51,10 @@ function DesktopBootstrap() {
       <h1>视译宝</h1>
       {failed ? (
         <>
-          <p>本地服务启动失败，请重试。</p>
-          <button type="button" onClick={retry}>重新启动检测</button>
+          {/* 外壳换端口重试时会重建窗口，这里的计时也随之重来；真正走到这一步说明
+              外壳仍在重试，或已彻底放弃并弹过错误框——后者重试无用，得重开应用。 */}
+          <p>本地服务尚未就绪。可再等一会儿重试；若已弹出启动失败提示，请退出应用后重新打开。</p>
+          <button type="button" onClick={retry}>重新检测</button>
         </>
       ) : (
         <>
