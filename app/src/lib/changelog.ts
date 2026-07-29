@@ -12,14 +12,42 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.4'
+export const CURRENT_VERSION = 'v0.1.5'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
+  {
+    version: 'v0.1.5',
+    date: '2026-07-29',
+    title: '本地接口访问控制加固与失败可见性修复',
+    isLatest: true,
+    highlights: [
+      '修复本地接口可被浏览器中任意网页读取，导致 Gemini 与 MiMo 密钥泄露的问题',
+      '翻译失败不再静默保留原文假装成功：全片失败明确报错，部分失败在日志中告警',
+      '桌面端边车启动改为健康检查确认，并修复退出后临时解压目录残留',
+    ],
+    details: {
+      improvements: [
+        '本地 API 增加 Origin / Referer 精确主机名白名单与桌面端一次性令牌双重校验',
+        'CORS 由全开收窄为本地来源正则，并移除无认证暴露任务目录的 /files 静态挂载',
+        'Gemini API Key 全部改走请求头，不再出现在 URL 中被日志与代理记录',
+        '桌面出包工作流改为「先验证后发布」，产物数量校验不通过则不发布 Release',
+      ],
+      fixes: [
+        '修复本地目录接口的来源校验可被 localhost.attacker.com 一类域名绕过',
+        '修复智能标题生成失败时抛出未定义变量，导致整条转译任务被标记为失败',
+        '修复 MiMo 返回异常结构时仅提示单个字段名，且失败后其余分段仍继续消耗额度',
+        '修复 HTTP Range 后缀请求（bytes=-N）返回文件开头而非末尾，影响播放器定位',
+        '修复边车端口冲突时无重试兜底，界面持续停在等待页且无任何提示',
+        '修复 Windows 打包脚本按文件名取安装包，可能把上一个版本当成交付物',
+        '修复 macOS 装机验证引用的路径不存在，该验证此前从未真正执行',
+        '修复桌面版读取不到 .env 配置，密钥只能通过设置面板写入',
+      ],
+    },
+  },
   {
     version: 'v0.1.4',
     date: '2026-07-28',
     title: '内存架构深度优化与流媒体资源回收升级',
-    isLatest: true,
     highlights: [
       '彻底修复时间轴视频帧抽离、声纹试听与流媒体播放器中的 Media 元素与 Blob 内存泄露',
       '后端任务日志 task.json 引入 500 条上限管控，解决大视频转译时的磁盘 I/O 与内存膨胀',

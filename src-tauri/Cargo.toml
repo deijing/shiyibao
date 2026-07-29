@@ -1,6 +1,6 @@
 [package]
 name = "shiyibao"
-version = "0.1.4"
+version = "0.1.5"
 description = "视译宝桌面应用"
 authors = ["ShiYiBao"]
 edition = "2021"
