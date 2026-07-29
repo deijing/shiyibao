@@ -28,8 +28,12 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             bundles: app,dmg
+          # macos-13 是最后一个 Intel 镜像，已于 2025-12-04 退役，指定它只会一直排队。
+          # macos-15-intel 是替代标签，且属于标准 runner（免费额度可用），供应到
+          # 2027-08 为止——之后 Actions 不再提供任何 x86_64 macOS 镜像。届时要么放弃
+          # Intel 包，要么自建 runner：PyInstaller 不做交叉编译，边车必须在 Intel 机器上打。
           - name: macOS x86_64 (Intel)
-            os: macos-13
+            os: macos-15-intel
             target: x86_64-apple-darwin
             bundles: app,dmg
           - name: Windows x86_64
