@@ -201,11 +201,21 @@ jobs:
             [ "${#files[@]}" -gt 0 ] && printf '  %s\n' "${files[@]}" >&2
             exit 1
           fi
-          printf '产物清单：\n'
+          printf '构建产物：\n'
           printf '  %s\n' "${files[@]}"
+
+          # Tauri 用 productName（中文「视译宝」）作文件名前缀，而 GitHub Release 的
+          # 资产名不接受非 ASCII 字符、会直接剥掉，用户下到的就是 _0.1.5_aarch64.dmg，
+          # 完全看不出是什么包。复制成 ASCII 前缀再发布。
+          mkdir -p release-assets
+          for f in "${files[@]}"; do
+            cp "$f" "release-assets/shiyibao_$(basename "$f" | cut -d_ -f2-)"
+          done
+          printf '待发布资产：\n'
           {
             echo 'checksums<<CHECKSUMS_EOF'
-            for f in "${files[@]}"; do
+            for f in release-assets/*; do
+              printf '  %s\n' "$f" >&2
               printf '| `%s` | `%s` |\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
             done
             echo 'CHECKSUMS_EOF'
@@ -239,6 +249,4 @@ jobs:
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
-          files: |
-            bundles/**/*.dmg
-            bundles/**/*.exe
+          files: release-assets/*
