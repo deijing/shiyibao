@@ -11,6 +11,7 @@ from fastapi import APIRouter
 
 from ..config import APP_DATA_DIR, WORKSPACE_DIR, get_user_settings
 from ..services.audio import find_media_binary
+from ..services.hwaccel import describe_acceleration
 
 router = APIRouter(tags=["environment"])
 
@@ -52,6 +53,48 @@ async def check_environment() -> Dict[str, Any]:
             "detail": f"{version_str} (路径: {ffmpeg_path})",
             "recommendation": None,
         })
+
+        # 1b. GPU / 硬件编码能力
+        try:
+            accel = await describe_acceleration()
+            active = accel["active"]
+            if active["is_hardware"]:
+                checks.append({
+                    "id": "ffmpeg_hwaccel",
+                    "category": "core",
+                    "name": "视频 GPU 硬件加速编码",
+                    "status": "pass",
+                    "detail": (
+                        f"当前使用 {active['label']}（编码器: {active['encoder']}）；"
+                        f"可用后端: {', '.join(b['label'] for b in accel['backends'])}"
+                    ),
+                    "recommendation": None,
+                })
+            else:
+                hw_hint = {
+                    "Darwin": "请确认 FFmpeg 已启用 VideoToolbox（brew install ffmpeg 通常自带）。",
+                    "Windows": "请安装支持 NVENC/QSV/AMF 的完整 FFmpeg 构建（如 Gyan.FFmpeg），并确保显卡驱动最新。",
+                }.get(system_name, "请安装支持 NVENC/VAAPI/QSV 的 FFmpeg 构建。")
+                checks.append({
+                    "id": "ffmpeg_hwaccel",
+                    "category": "core",
+                    "name": "视频 GPU 硬件加速编码",
+                    "status": "warn",
+                    "detail": (
+                        f"未检测到可用 GPU 编码器，将使用 {active['label']} "
+                        f"（线程限制: {accel['software_threads']}）。"
+                    ),
+                    "recommendation": hw_hint,
+                })
+        except Exception as e:
+            checks.append({
+                "id": "ffmpeg_hwaccel",
+                "category": "core",
+                "name": "视频 GPU 硬件加速编码",
+                "status": "warn",
+                "detail": f"硬件加速探测失败: {e}",
+                "recommendation": "可忽略；成片时将自动尝试硬件编码并在失败时回退 CPU。",
+            })
     else:
         missing = []
         if not ffmpeg_path:

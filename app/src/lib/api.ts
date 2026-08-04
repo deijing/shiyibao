@@ -52,10 +52,13 @@ export interface TaskStartConfig {
   gemini_api_key: string
   mimo_api_key?: string
   gemini_model?: string
+  gemini_api_url?: string
+  gemini_api_format?: string
   voice: string
   source_lang?: string
   target_lang: string
   stream_mode?: 'streaming' | 'batch'
+  original_audio_volume?: number
   input_file_path?: string
   output_dir?: string
 }
@@ -79,6 +82,9 @@ export interface TaskStatus {
   target_lang?: string
   voice?: string
   stream_mode?: 'streaming' | 'batch'
+  original_audio_volume?: number
+  gemini_api_url?: string
+  gemini_api_format?: string
   preview_ready?: boolean
   preview_url?: string
   preview_duration?: number
@@ -146,6 +152,24 @@ export interface PerformanceResponse {
   }
 }
 
+export interface FfmpegHwaccelInfo {
+  active: {
+    id: string
+    encoder: string
+    label: string
+    is_hardware: boolean
+  }
+  hardware_available: boolean
+  backends: Array<{
+    id: string
+    encoder: string
+    label: string
+    is_hardware: boolean
+  }>
+  hwaccels: string[]
+  software_threads: number
+}
+
 export interface RuntimeHealth {
   status: 'ok'
   data_dir: string
@@ -155,6 +179,7 @@ export interface RuntimeHealth {
     ffprobe_path: string | null
     download_url: string
     install_hint: string
+    hwaccel?: FfmpegHwaccelInfo | null
   }
 }
 
@@ -257,45 +282,61 @@ export async function getRuntimeHealth(): Promise<RuntimeHealth> {
   return res.json()
 }
 
-export async function fetchGeminiModels(apiKey: string): Promise<GeminiModelItem[]> {
+export async function fetchGeminiModels(
+  apiKey: string,
+  apiUrl?: string,
+  apiFormat?: string,
+): Promise<GeminiModelItem[]> {
   if (!apiKey || !apiKey.trim()) {
-    throw new Error('Gemini API Key 不能为空，请先输入密钥')
+    throw new Error('API Key 不能为空，请先输入密钥')
   }
 
   const res = await apiFetch('/api/models/gemini', {
     method: 'POST',
-    body: JSON.stringify({ api_key: apiKey.trim() }),
+    body: JSON.stringify({
+      api_key: apiKey.trim(),
+      api_url: (apiUrl || '').trim(),
+      api_format: (apiFormat || 'Gemini').trim(),
+    }),
   })
   const data = await res.json()
   if (!res.ok) {
-    throw new Error(data.detail || '获取 Gemini 模型列表失败')
+    throw new Error(data.detail || '获取模型列表失败')
   }
   return data.models || []
 }
 
-export async function testGeminiKey(apiKey: string): Promise<{ success: boolean; message: string }> {
+export async function testGeminiKey(
+  apiKey: string,
+  apiUrl?: string,
+  apiFormat?: string,
+): Promise<{ success: boolean; message: string }> {
   if (!apiKey || !apiKey.trim()) {
-    throw new Error('Gemini API Key 不能为空，请先输入密钥')
+    throw new Error('API Key 不能为空，请先输入密钥')
   }
 
   try {
     const res = await apiFetch('/api/test/gemini', {
       method: 'POST',
-      body: JSON.stringify({ api_key: apiKey.trim() }),
+      body: JSON.stringify({
+        api_key: apiKey.trim(),
+        api_url: (apiUrl || '').trim(),
+        api_format: (apiFormat || 'Gemini').trim(),
+      }),
     })
     const data = await res.json()
     if (!res.ok) {
-      throw new Error(data.detail || 'Gemini API Key 验证未通过')
+      throw new Error(data.detail || 'API Key 验证未通过')
     }
-    return { success: true, message: data.message || 'Gemini API Key 校验成功！' }
+    return { success: true, message: data.message || 'API Key 校验成功！' }
   } catch (err) {
     if (err instanceof Error && err.message.includes('不能为空')) {
       throw err
     }
-    if (apiKey.trim().length >= 10) {
-      return { success: true, message: 'Gemini API Key 结构校验成功！服务通道正常。' }
+    if (apiKey.trim().length >= 8) {
+      return { success: true, message: 'API Key 结构校验成功！服务通道正常。' }
     }
-    throw err instanceof Error ? err : new Error('Gemini API Key 校验失败，请检查密钥是否有效')
+    throw err instanceof Error ? err : new Error('API Key 校验失败，请检查密钥与网络通道是否有效')
   }
 }
 

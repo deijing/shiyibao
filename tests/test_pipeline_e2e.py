@@ -80,7 +80,7 @@ def test_batch_pipeline_completes_and_archives_output(monkeypatch, tmp_path: Pat
         (target_dir / "dubbed_audio.wav").write_bytes(b"sample-dub")
 
     async def fake_merge(
-        target_dir: Path, video_path: Path, _segments: list[dict]
+        target_dir: Path, video_path: Path, _segments: list[dict], *_args, **_kwargs
     ) -> None:
         shutil.copy2(video_path, target_dir / "final.mp4")
 

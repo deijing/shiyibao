@@ -80,13 +80,19 @@ def rule_based_detect_language(text: str) -> tuple[str, str]:
     return "en", LANG_CODE_TO_NAME["en"]
 
 
-async def detect_language_with_gemini(text: str, gemini_api_key: str, model_name: str = "gemini-2.0-flash") -> tuple[str, str] | None:
-    """使用 Gemini API 将文本分类为支持的语言代码。"""
+from .translate import build_ai_request_args
+
+
+async def detect_language_with_gemini(
+    text: str,
+    gemini_api_key: str,
+    model_name: str = "gemini-2.0-flash",
+    gemini_api_url: str = "",
+    gemini_api_format: str = "Gemini",
+) -> tuple[str, str] | None:
+    """使用 AI API 将文本分类为支持的语言代码。"""
     if not gemini_api_key or not text.strip():
         return None
-
-    clean_model = (model_name or "gemini-2.0-flash").replace("models/", "")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
 
     system_instruction = (
         "You are an expert language identifier. Analyze the given text and determine its primary spoken/written language. "
@@ -96,27 +102,27 @@ async def detect_language_with_gemini(text: str, gemini_api_key: str, model_name
 
     prompt_text = text[:1500]  # 前 1500 个字符足以识别语言
 
-    body = {
-        "systemInstruction": {"parts": [{"text": system_instruction}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt_text}]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1},
-    }
+    url, headers, body, extract_text = build_ai_request_args(
+        gemini_api_format,
+        gemini_api_url,
+        model_name,
+        gemini_api_key,
+        system_instruction,
+        prompt_text,
+    )
 
     try:
-        # key 只走请求头：写在 query string 里会被 httpx 日志与任何中间代理原样记下来。
-        async with httpx.AsyncClient(
-            timeout=10.0, headers={"x-goog-api-key": gemini_api_key}
-        ) as client:
-            resp = await client.post(url, json=body)
-            if resp.status_code == 200:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            if resp.is_success:
                 data = resp.json()
-                raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                raw_text = extract_text(data)
                 parsed = json.loads(raw_text)
                 lang_code = str(parsed.get("language", "")).strip().lower()
                 if lang_code in LANG_CODE_TO_NAME:
                     return lang_code, LANG_CODE_TO_NAME[lang_code]
     except Exception as exc:
-        logger.warning("Gemini language detection failed, falling back to rule-based: %s", exc)
+        logger.warning("AI language detection failed, falling back to rule-based: %s", exc)
 
     return None
 
@@ -125,6 +131,8 @@ async def detect_language_from_text(
     segments_or_text: Sequence[dict] | str,
     gemini_api_key: str | None = None,
     gemini_model: str = "gemini-2.0-flash",
+    gemini_api_url: str = "",
+    gemini_api_format: str = "Gemini",
 ) -> tuple[str, str]:
     """从分段列表或纯文本中检测语言代码和显示名称。"""
     if isinstance(segments_or_text, str):
@@ -136,7 +144,13 @@ async def detect_language_from_text(
         return "en", LANG_CODE_TO_NAME["en"]
 
     if gemini_api_key:
-        gemini_res = await detect_language_with_gemini(full_text, gemini_api_key, gemini_model)
+        gemini_res = await detect_language_with_gemini(
+            full_text,
+            gemini_api_key,
+            model_name=gemini_model,
+            gemini_api_url=gemini_api_url,
+            gemini_api_format=gemini_api_format,
+        )
         if gemini_res:
             return gemini_res
 

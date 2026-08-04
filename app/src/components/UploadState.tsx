@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { ArrowLeftRight, Upload, Sparkles, PartyPopper, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Zap } from 'lucide-react'
+import { ArrowLeftRight, Upload, Sparkles, PartyPopper, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Zap, Volume2, VolumeX } from 'lucide-react'
 import { uploadVideo, startTask, fetchServerSettings } from '@/lib/api'
 import { saveActiveTaskId } from '@/lib/task-session'
 import {
@@ -133,22 +133,28 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
       setProgressPercent(75)
 
       const currentModel = settings.geminiModel || 'gemini-2.0-flash'
-      addLog(`配置 AI [${getGeminiModelDisplayName(currentModel)}] 翻译引擎...`, 'AI', 'process')
+      const apiFormat = settings.geminiApiFormat || 'Gemini'
+      addLog(`配置 AI [${apiFormat} | ${getGeminiModelDisplayName(currentModel)}] 翻译引擎...`, 'AI', 'process')
       const sourceLangLabel = (settings.sourceLang || 'auto') === 'auto'
         ? '自动识别 (Auto)'
         : getLanguageDisplayName(settings.sourceLang, true)
       addLog(`初始语言配置: ${sourceLangLabel}${(settings.sourceLang || 'auto') === 'auto' ? ' (系统将在音频解析时自动判别)' : ''}`, '配置', 'info')
       addLog(`绑定音色模型: ${settings.mimoVoice || '默认预设'}`, '配置', 'info')
+      const origVol = settings.originalAudioVolume ?? 0.2
+      addLog(`原音保留比例: ${origVol <= 0 ? '已静音 (0%)' : `${Math.round(origVol * 100)}%`}`, '配置', 'info')
 
 
       await startTask(task_id, {
         gemini_api_key: settings.geminiApiKey,
+        gemini_api_url: settings.geminiApiUrl || '',
+        gemini_api_format: apiFormat,
         mimo_api_key: settings.xiaomiTtsKey,
         gemini_model: currentModel,
         voice: settings.mimoVoice,
         source_lang: settings.sourceLang || 'auto',
         target_lang: settings.targetLang || 'zh',
         stream_mode: settings.streamMode || 'streaming',
+        original_audio_volume: origVol,
       })
 
       // 后端接收任务后立即持久化，避免短暂过渡动画期间刷新导致任务无法恢复。
@@ -399,6 +405,101 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
               </div>
             )}
           </div>
+
+          {/* 视频原声保留音量快捷调控栏 */}
+          <div className="mt-4 w-full p-3.5 sm:p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 shrink-0">
+              <div className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
+                (settings.originalAudioVolume ?? 0.2) <= 0
+                  ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400'
+                  : 'bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400'
+              }`}>
+                {(settings.originalAudioVolume ?? 0.2) <= 0 ? (
+                  <VolumeX className="w-4 h-4 stroke-[1.5]" />
+                ) : (
+                  <Volume2 className="w-4 h-4 stroke-[1.5]" />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                    原视频原音音量
+                  </span>
+                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border ${
+                    (settings.originalAudioVolume ?? 0.2) <= 0
+                      ? 'bg-rose-50 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800/60'
+                      : 'bg-purple-50 dark:bg-purple-950/80 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800/60'
+                  }`}>
+                    {(settings.originalAudioVolume ?? 0.2) <= 0
+                      ? '已静音 (0%)'
+                      : `${Math.round((settings.originalAudioVolume ?? 0.2) * 100)}%`}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                  合成成片时原声音轨的保留比例 (0% 即为纯配音)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 flex-1 max-w-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  const updated: AppSettings = { ...settings, originalAudioVolume: 0.0 }
+                  setSettings(updated)
+                  saveSettings(updated)
+                }}
+                title="关掉原声 (0%)"
+                className="p-1 text-slate-400 hover:text-rose-500 transition-colors shrink-0 border-0 bg-transparent cursor-pointer"
+              >
+                <VolumeX className="w-4 h-4" />
+              </button>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="5"
+                value={Math.round((settings.originalAudioVolume ?? 0.2) * 100)}
+                onChange={(e) => {
+                  const val = Math.max(0, Math.min(100, Number(e.target.value))) / 100
+                  const updated: AppSettings = { ...settings, originalAudioVolume: val }
+                  setSettings(updated)
+                  saveSettings(updated)
+                }}
+                className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-600 dark:accent-purple-400"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const updated: AppSettings = { ...settings, originalAudioVolume: 1.0 }
+                  setSettings(updated)
+                  saveSettings(updated)
+                }}
+                title="最大原声音量 (100%)"
+                className="p-1 text-slate-400 hover:text-purple-600 transition-colors shrink-0 border-0 bg-transparent cursor-pointer"
+              >
+                <Volume2 className="w-4 h-4" />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const cur = settings.originalAudioVolume ?? 0.2
+                const next = cur > 0 ? 0.0 : 0.2
+                const updated: AppSettings = { ...settings, originalAudioVolume: next }
+                setSettings(updated)
+                saveSettings(updated)
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-xl border transition-all shrink-0 cursor-pointer ${
+                (settings.originalAudioVolume ?? 0.2) <= 0
+                  ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200/60'
+              }`}
+            >
+              {(settings.originalAudioVolume ?? 0.2) > 0 ? '一键静音原声' : '开启原声 (20%)'}
+            </button>
+          </div>
         </div>
 
         {/* 右侧 35%：日志 / 交互侧边面板 */}
@@ -564,6 +665,39 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+
+                {/* 原声音量快速切换 */}
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-400 dark:text-slate-500 shrink-0 select-none">原音:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = settings.originalAudioVolume ?? 0.2
+                      const next = cur > 0 ? 0.0 : 0.2
+                      const updated: AppSettings = { ...settings, originalAudioVolume: next }
+                      setSettings(updated)
+                      saveSettings(updated)
+                    }}
+                    title="点击切换原声音量：静音 (0%) 或 保留 (20%)"
+                    className={`h-6 px-1.5 text-[11px] font-medium rounded-md cursor-pointer transition-colors inline-flex items-center gap-1 ${
+                      (settings.originalAudioVolume ?? 0.2) <= 0
+                        ? 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100'
+                        : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/60'
+                    }`}
+                  >
+                    {(settings.originalAudioVolume ?? 0.2) <= 0 ? (
+                      <>
+                        <VolumeX className="w-3 h-3 text-rose-500" />
+                        <span>静音</span>
+                      </>
+                    ) : (
+                      <>
+                        <Volume2 className="w-3 h-3 text-purple-500" />
+                        <span>{Math.round((settings.originalAudioVolume ?? 0.2) * 100)}%</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 

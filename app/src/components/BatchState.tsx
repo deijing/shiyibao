@@ -619,12 +619,15 @@ export default function BatchState() {
           taskIdToUse = registered.task_id
           await startTask(taskIdToUse, {
             gemini_api_key: currentSettings.geminiApiKey,
+            gemini_api_url: currentSettings.geminiApiUrl || '',
+            gemini_api_format: currentSettings.geminiApiFormat || 'Gemini',
             mimo_api_key: currentSettings.xiaomiTtsKey,
             gemini_model: currentModel,
             voice: currentSettings.mimoVoice || '冰糖',
             source_lang: currentSettings.sourceLang || 'auto',
             target_lang: item.targetLang,
             stream_mode: currentSettings.streamMode || 'streaming',
+            original_audio_volume: currentSettings.originalAudioVolume ?? 0.2,
             output_dir: archiveOutputDir,
           })
         } else if (item.fileItem.file) {
@@ -632,12 +635,15 @@ export default function BatchState() {
           taskIdToUse = uploadRes.task_id
           await startTask(taskIdToUse, {
             gemini_api_key: currentSettings.geminiApiKey,
+            gemini_api_url: currentSettings.geminiApiUrl || '',
+            gemini_api_format: currentSettings.geminiApiFormat || 'Gemini',
             mimo_api_key: currentSettings.xiaomiTtsKey,
             gemini_model: currentModel,
             voice: currentSettings.mimoVoice || '冰糖',
             source_lang: currentSettings.sourceLang || 'auto',
             target_lang: item.targetLang,
             stream_mode: currentSettings.streamMode || 'streaming',
+            original_audio_volume: currentSettings.originalAudioVolume ?? 0.2,
             output_dir: archiveOutputDir,
           })
         }

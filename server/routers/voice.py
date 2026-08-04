@@ -69,33 +69,64 @@ from pydantic import BaseModel
 
 class KeyTestRequest(BaseModel):
     api_key: str
+    api_url: str = ""
+    api_format: str = "Gemini"
 
 
 @router.post("/test/gemini")
 async def test_gemini_key(req: KeyTestRequest):
     key = req.api_key.strip()
     if not key:
-        raise HTTPException(status_code=400, detail="Gemini API Key 不能为空")
+        raise HTTPException(status_code=400, detail="API Key 不能为空")
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models"
-    # key 只走请求头：写在 query string 里会被 httpx 日志与任何中间代理原样记下来。
-    async with httpx.AsyncClient(timeout=10.0, headers={"x-goog-api-key": key}) as client:
+    fmt = (req.api_format or "Gemini").strip()
+    clean_base = (req.api_url or "").strip().rstrip("/")
+
+    if fmt in ("OpenAI", "OpenAI-Response"):
+        default_base = "https://api.openai.com"
+        root_url = clean_base if clean_base else default_base
+        url = f"{root_url}/models" if root_url.endswith("/v1") else f"{root_url}/v1/models"
+        headers = {"Authorization": f"Bearer {key}"}
+    elif fmt == "Anthropic":
+        default_base = "https://api.anthropic.com"
+        root_url = clean_base if clean_base else default_base
+        url = f"{root_url}/messages" if root_url.endswith("/v1") else f"{root_url}/v1/messages"
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
+    else:
+        default_base = "https://generativelanguage.googleapis.com"
+        root_url = clean_base if clean_base else default_base
+        url = f"{root_url}/models" if root_url.endswith("/v1beta") else f"{root_url}/v1beta/models"
+        headers = {"x-goog-api-key": key}
+
+    async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
         try:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                return {"status": "ok", "message": "Gemini API Key 校验通过！API 通信正常。"}
+            if fmt == "Anthropic":
+                # Anthropic GET /v1/messages 不支持，试发简短消息
+                resp = await client.post(url, json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "max_tokens": 5,
+                    "messages": [{"role": "user", "content": "hi"}]
+                })
             else:
-                detail = f"Key 无效 (状态码 {resp.status_code})"
+                resp = await client.get(url)
+
+            if resp.status_code in (200, 201):
+                return {"status": "ok", "message": f"{fmt} API 校验成功！通信与密钥正常。"}
+            else:
+                detail = f"密钥或网络异常 (状态码 {resp.status_code})"
                 try:
                     err = resp.json()
-                    if "error" in err and "message" in err["error"]:
-                        detail = err["error"]["message"]
+                    if "error" in err:
+                        if isinstance(err["error"], dict) and "message" in err["error"]:
+                            detail = err["error"]["message"]
+                        elif isinstance(err["error"], str):
+                            detail = err["error"]
                 except Exception:
                     pass
-                raise HTTPException(status_code=400, detail=f"Gemini API 校验失败: {detail}")
+                raise HTTPException(status_code=400, detail=f"{fmt} API 校验失败: {detail}")
         except httpx.RequestError as e:
-            if len(key) >= 10:
-                return {"status": "ok", "message": "Gemini API Key 结构校验通过，就绪！"}
+            if len(key) >= 8:
+                return {"status": "ok", "message": f"{fmt} API Key 结构校验通过，通信就绪！"}
             raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}")
 
 
@@ -103,42 +134,86 @@ async def test_gemini_key(req: KeyTestRequest):
 async def get_gemini_models(req: KeyTestRequest):
     key = req.api_key.strip()
     if not key:
-        raise HTTPException(status_code=400, detail="Gemini API Key 不能为空")
+        raise HTTPException(status_code=400, detail="API Key 不能为空")
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models"
-    async with httpx.AsyncClient(timeout=15.0, headers={"x-goog-api-key": key}) as client:
-        try:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                data = resp.json()
-                raw_models = data.get("models", [])
-                valid_models = []
-                for m in raw_models:
-                    methods = m.get("supportedGenerationMethods", [])
-                    name = m.get("name", "")
-                    if "generateContent" in methods and "gemini" in name.lower():
-                        clean_id = name.replace("models/", "")
-                        display_name = m.get("displayName", clean_id)
-                        desc = m.get("description", "")
-                        valid_models.append({
-                            "id": clean_id,
-                            "name": display_name,
-                            "description": desc,
-                        })
-                # 按模型 ID 倒序排列，优先展示较新模型
-                valid_models.sort(key=lambda x: x["id"], reverse=True)
-                return {"models": valid_models}
-            else:
-                detail = f"状态码 {resp.status_code}"
-                try:
-                    err = resp.json()
-                    if "error" in err and "message" in err["error"]:
-                        detail = err["error"]["message"]
-                except Exception:
-                    pass
-                raise HTTPException(status_code=400, detail=f"获取 Gemini 模型列表失败: {detail}")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}")
+    fmt = (req.api_format or "Gemini").strip()
+    clean_base = (req.api_url or "").strip().rstrip("/")
+
+    if fmt in ("OpenAI", "OpenAI-Response"):
+        default_base = "https://api.openai.com"
+        root_url = clean_base if clean_base else default_base
+        url = f"{root_url}/models" if root_url.endswith("/v1") else f"{root_url}/v1/models"
+        headers = {"Authorization": f"Bearer {key}"}
+
+        async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+            try:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw_models = data.get("data", [])
+                    valid_models = []
+                    for m in raw_models:
+                        m_id = m.get("id", "")
+                        if any(k in m_id.lower() for k in ("gpt", "claude", "gemini", "qwen", "deepseek", "moonshot", "doubao", "ep-", "llama", "chat", "v1", "reasoner")):
+                            valid_models.append({"id": m_id, "name": m_id, "description": "OpenAI 兼容模型"})
+                    valid_models.sort(key=lambda x: x["id"])
+                    if not valid_models:
+                        valid_models = [
+                            {"id": "gpt-4o-mini", "name": "gpt-4o-mini (推荐)", "description": "默认高效模型"},
+                            {"id": "gpt-4o", "name": "gpt-4o", "description": "全能多模态模型"},
+                        ]
+                    return {"models": valid_models}
+                else:
+                    raise HTTPException(status_code=400, detail=f"拉取 OpenAI 模型失败 (HTTP {resp.status_code})")
+            except httpx.RequestError as e:
+                raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}")
+
+    elif fmt == "Anthropic":
+        return {
+            "models": [
+                {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet (推荐)", "description": "Anthropic 旗舰推理模型"},
+                {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "description": "Anthropic 高速轻量模型"},
+                {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "description": "Anthropic 深度推理模型"},
+            ]
+        }
+    else:
+        default_base = "https://generativelanguage.googleapis.com"
+        root_url = clean_base if clean_base else default_base
+        url = f"{root_url}/models" if root_url.endswith("/v1beta") else f"{root_url}/v1beta/models"
+        headers = {"x-goog-api-key": key}
+
+        async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+            try:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw_models = data.get("models", [])
+                    valid_models = []
+                    for m in raw_models:
+                        methods = m.get("supportedGenerationMethods", [])
+                        name = m.get("name", "")
+                        if "generateContent" in methods and "gemini" in name.lower():
+                            clean_id = name.replace("models/", "")
+                            display_name = m.get("displayName", clean_id)
+                            desc = m.get("description", "")
+                            valid_models.append({
+                                "id": clean_id,
+                                "name": display_name,
+                                "description": desc,
+                            })
+                    valid_models.sort(key=lambda x: x["id"], reverse=True)
+                    return {"models": valid_models}
+                else:
+                    detail = f"状态码 {resp.status_code}"
+                    try:
+                        err = resp.json()
+                        if "error" in err and "message" in err["error"]:
+                            detail = err["error"]["message"]
+                    except Exception:
+                        pass
+                    raise HTTPException(status_code=400, detail=f"获取 Gemini 模型列表失败: {detail}")
+            except httpx.RequestError as e:
+                raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}")
 
 
 

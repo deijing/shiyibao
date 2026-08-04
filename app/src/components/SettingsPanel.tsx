@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings, Eye, EyeOff, Sliders, KeyRound, Mic, Zap, CheckCircle2, AlertCircle, Loader2, ExternalLink, RefreshCcw, Languages, Shield, ShieldCheck } from 'lucide-react'
+import { Settings, Eye, EyeOff, Sliders, KeyRound, Mic, Zap, CheckCircle2, AlertCircle, Loader2, ExternalLink, RefreshCcw, Languages, Shield, ShieldCheck, Volume2, VolumeX } from 'lucide-react'
 import { GithubIcon } from './GithubIcon'
 import { ChangelogModal } from './ChangelogModal'
 import { EnvironmentCheckModal } from './EnvironmentCheckModal'
@@ -30,12 +30,15 @@ const STORAGE_KEY = 'shiyibao-settings'
 
 export interface AppSettings {
   geminiApiKey: string
+  geminiApiUrl?: string
+  geminiApiFormat?: 'Gemini' | 'OpenAI' | 'OpenAI-Response' | 'Anthropic'
   geminiModel: string
   xiaomiTtsKey: string
   mimoVoice: string
   sourceLang: string
   targetLang: string
   streamMode?: 'streaming' | 'batch'
+  originalAudioVolume?: number
   customGeminiModels?: { id: string; name: string }[]
 }
 
@@ -87,6 +90,75 @@ export const VOICES = [
   { id: 'Dean', label: 'Dean (Male)', lang: 'en' },
 ]
 
+import { GeminiLogo, DeepSeekLogo, KimiLogo, DoubaoLogo, OpenAILogo, ClaudeLogo } from './BrandLogos'
+
+export interface ApiPreset {
+  id: string
+  name: string
+  logo: React.ComponentType<{ className?: string }>
+  format: 'Gemini' | 'OpenAI' | 'OpenAI-Response' | 'Anthropic'
+  baseUrl: string
+  defaultModel: string
+  getKeyUrl: string
+}
+
+export const AI_PRESETS: ApiPreset[] = [
+  {
+    id: 'gemini',
+    name: '谷歌 Gemini',
+    logo: GeminiLogo,
+    format: 'Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com',
+    defaultModel: 'gemini-2.0-flash',
+    getKeyUrl: 'https://aistudio.google.com/api-keys',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    logo: DeepSeekLogo,
+    format: 'OpenAI',
+    baseUrl: 'https://api.deepseek.com',
+    defaultModel: 'deepseek-chat',
+    getKeyUrl: 'https://platform.deepseek.com/api_keys',
+  },
+  {
+    id: 'kimi',
+    name: 'Kimi',
+    logo: KimiLogo,
+    format: 'OpenAI',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    defaultModel: 'moonshot-v1-8k',
+    getKeyUrl: 'https://platform.moonshot.cn/console/api-keys',
+  },
+  {
+    id: 'doubao',
+    name: '豆包',
+    logo: DoubaoLogo,
+    format: 'OpenAI',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    defaultModel: 'doubao-pro-32k',
+    getKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI 官方',
+    logo: OpenAILogo,
+    format: 'OpenAI',
+    baseUrl: 'https://api.openai.com',
+    defaultModel: 'gpt-4o-mini',
+    getKeyUrl: 'https://platform.openai.com/api-keys',
+  },
+  {
+    id: 'claude',
+    name: 'Anthropic Claude',
+    logo: ClaudeLogo,
+    format: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    defaultModel: 'claude-3-5-sonnet-20241022',
+    getKeyUrl: 'https://console.anthropic.com/',
+  },
+]
+
 export const DEFAULT_GEMINI_MODELS = [
   { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (推荐 - 高速多模态)' },
   { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite (高性价比轻量级)' },
@@ -108,17 +180,74 @@ export function getGeminiModelDisplayName(modelId?: string): string {
     .split('/')
     .pop()!
     .replace(/^gemini-/i, 'Gemini ')
-    .replace(/-/g, ' ')
+}
+
+export function getApiPreviewUrl(format?: string, baseUrl?: string, model?: string): string {
+  const fmt = format || 'Gemini'
+  const cleanBase = (baseUrl || '').trim().replace(/\/+$/, '')
+  const cleanModel = (model || 'gemini-2.0-flash').replace(/^models\//, '')
+
+  if (fmt === 'OpenAI-Response') {
+    const root = cleanBase || 'https://api.openai.com'
+    if (root.includes('/responses')) return root
+    if (root.endsWith('/v1')) return `${root}/responses`
+    return `${root}/v1/responses`
+  }
+
+  if (fmt === 'OpenAI') {
+    const root = cleanBase || 'https://api.openai.com'
+    if (root.includes('/chat/completions')) return root
+    if (root.endsWith('/v1')) return `${root}/chat/completions`
+    return `${root}/v1/chat/completions`
+  }
+
+  if (fmt === 'Anthropic') {
+    const root = cleanBase || 'https://api.anthropic.com'
+    if (root.includes('/messages')) return root
+    if (root.endsWith('/v1')) return `${root}/messages`
+    return `${root}/v1/messages`
+  }
+
+  const root = cleanBase || 'https://generativelanguage.googleapis.com'
+  if (root.includes(':generateContent')) return root
+  if (root.includes('/v1beta/models/')) return `${root}:generateContent`
+  if (root.endsWith('/v1beta')) return `${root}/models/${cleanModel}:generateContent`
+  return `${root}/v1beta/models/${cleanModel}:generateContent`
+}
+
+export function getApiKeyConsoleUrl(baseUrl?: string, format?: string): { url: string; label: string } {
+  const url = (baseUrl || '').toLowerCase()
+
+  if (url.includes('deepseek')) {
+    return { url: 'https://platform.deepseek.com/api_keys', label: '获取 DeepSeek Key' }
+  }
+  if (url.includes('moonshot') || url.includes('kimi')) {
+    return { url: 'https://platform.moonshot.cn/console/api-keys', label: '获取 Kimi Key' }
+  }
+  if (url.includes('volcengine') || url.includes('volces')) {
+    return { url: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey', label: '获取豆包 Key' }
+  }
+  if (format === 'Anthropic' || url.includes('anthropic')) {
+    return { url: 'https://console.anthropic.com/settings/keys', label: '获取 Claude Key' }
+  }
+  if (format === 'OpenAI' || format === 'OpenAI-Response' || url.includes('openai')) {
+    return { url: 'https://platform.openai.com/api-keys', label: '获取 OpenAI Key' }
+  }
+
+  return { url: 'https://aistudio.google.com/app/apikey', label: '获取 Gemini Key' }
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   geminiApiKey: '',
+  geminiApiUrl: '',
+  geminiApiFormat: 'Gemini',
   geminiModel: 'gemini-2.0-flash',
   xiaomiTtsKey: '',
   mimoVoice: '冰糖',
   sourceLang: 'auto',
   targetLang: 'zh',
   streamMode: 'streaming',
+  originalAudioVolume: 0.2,
   customGeminiModels: [],
 }
 
@@ -211,11 +340,11 @@ export default function SettingsPanel() {
     setTestingGemini(true)
     setGeminiResult(null)
     try {
-      const res = await testGeminiKey(settings.geminiApiKey)
+      const res = await testGeminiKey(settings.geminiApiKey, settings.geminiApiUrl, settings.geminiApiFormat)
       setGeminiVerified(true)
       setGeminiResult({
         type: 'success',
-        message: res.message || 'Gemini API Key 校验成功！通信正常。',
+        message: res.message || 'API Key 校验成功！通信正常。',
       })
     } catch (err) {
       setGeminiVerified(false)
@@ -232,14 +361,14 @@ export default function SettingsPanel() {
     if (!settings.geminiApiKey.trim()) {
       setGeminiResult({
         type: 'error',
-        message: '请先输入 Gemini API Key 再尝试获取模型列表',
+        message: '请先输入 API Key 再尝试获取模型列表',
       })
       return
     }
     setFetchingModels(true)
     setGeminiResult(null)
     try {
-      const models = await fetchGeminiModels(settings.geminiApiKey)
+      const models = await fetchGeminiModels(settings.geminiApiKey, settings.geminiApiUrl, settings.geminiApiFormat)
       setGeminiVerified(true)
       if (models.length > 0) {
         const formatted = models.map((m) => ({ id: m.id, name: m.name }))
@@ -250,18 +379,18 @@ export default function SettingsPanel() {
         }))
         setGeminiResult({
           type: 'success',
-          message: `拉取成功！检索到 ${models.length} 个可用 Gemini 模型。`,
+          message: `拉取成功！检索到 ${models.length} 个可用 AI 模型。`,
         })
       } else {
         setGeminiResult({
           type: 'error',
-          message: '未检索到该 API Key 支持生成能力的 Gemini 模型',
+          message: '未检索到该 API 支持生成能力的模型',
         })
       }
     } catch (err) {
       setGeminiResult({
         type: 'error',
-        message: err instanceof Error ? err.message : '获取 Gemini 模型列表失败',
+        message: err instanceof Error ? err.message : '获取 AI 模型列表失败',
       })
     } finally {
       setFetchingModels(false)
@@ -349,57 +478,166 @@ export default function SettingsPanel() {
               </h3>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Gemini 密钥面板 */}
+            <div className="flex flex-col gap-4">
+              {/* AI 翻译 API 密钥与代理设置面板 (第一行，全宽) */}
               <div className="p-4 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 space-y-3 flex flex-col justify-between transition-all">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <Label htmlFor="gemini-key" className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                      <span>Gemini API Key</span>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200/50 dark:border-slate-700/40 pb-2">
+                    <Label className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <Languages className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 stroke-[1.5]" />
+                      <span>AI 翻译 API 协议与密钥</span>
                       {geminiVerified && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded-md">
-                          <CheckCircle2 className="w-3 h-3 stroke-[1.5]" /> 已通过
+                          <CheckCircle2 className="w-3 h-3 stroke-[1.5]" /> 已校验通过
                         </span>
                       )}
                     </Label>
                   </div>
 
-                  <div className="relative">
-                    <Input
-                      id="gemini-key"
-                      type={showGeminiKey ? 'text' : 'password'}
-                      placeholder="输入 Gemini API Key"
-                      value={settings.geminiApiKey}
-                      onChange={(e) => {
-                        setSettings(s => ({ ...s, geminiApiKey: e.target.value }))
+                  {/* 常用服务预设快捷填入 */}
+                  <div className="space-y-1.5 bg-white/60 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        <Zap className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                        主流模型一键预设:
+                      </span>
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                        点击一键载入协议、Base URL 与模型
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                      {AI_PRESETS.map((preset) => {
+                        const LogoComponent = preset.logo
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => {
+                              setSettings((s) => ({
+                                ...s,
+                                geminiApiFormat: preset.format,
+                                geminiApiUrl: preset.baseUrl,
+                                geminiModel: preset.defaultModel,
+                              }))
+                              setGeminiVerified(false)
+                              setGeminiResult({
+                                type: 'success',
+                                message: `已载入【${preset.name}】预设 (协议: ${preset.format}, 默认模型: ${preset.defaultModel})`,
+                              })
+                            }}
+                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-slate-100/90 dark:bg-slate-800/90 hover:bg-purple-100 dark:hover:bg-purple-950/60 text-slate-700 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-400 border border-slate-200/80 dark:border-slate-700/80 transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                          >
+                            <LogoComponent className="w-3.5 h-3.5 shrink-0" />
+                            <span>{preset.name}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 1. API 协议格式下拉菜单 (独占一行) */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                      API 协议格式
+                    </span>
+                    <Select
+                      value={settings.geminiApiFormat || 'Gemini'}
+                      onValueChange={(val) => {
+                        const updatedFmt = val as 'Gemini' | 'OpenAI' | 'OpenAI-Response' | 'Anthropic'
+                        setSettings(s => ({ ...s, geminiApiFormat: updatedFmt }))
                         setGeminiVerified(false)
                         setGeminiResult(null)
                       }}
-                      className="h-10 bg-slate-100/70 dark:bg-slate-900/80 border-0 rounded-xl pr-10 text-xs font-mono text-slate-800 dark:text-slate-200 focus-visible:bg-white dark:focus-visible:bg-slate-900 focus-visible:ring-2 focus-visible:ring-slate-400/30 transition-all"
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      type="button"
-                      onClick={() => setShowGeminiKey(!showGeminiKey)}
-                      className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 h-8 w-8 rounded-lg"
                     >
-                      {showGeminiKey ? <EyeOff className="w-3.5 h-3.5 stroke-[1.5]" /> : <Eye className="w-3.5 h-3.5 stroke-[1.5]" />}
-                    </Button>
+                      <SelectTrigger className="h-9.5 px-3 text-xs bg-slate-100/80 dark:bg-slate-900/80 border-0 rounded-xl cursor-pointer">
+                        <SelectValue placeholder="选择 API 协议格式" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xl">
+                        <SelectItem value="OpenAI" className="text-xs cursor-pointer font-medium">OpenAI</SelectItem>
+                        <SelectItem value="OpenAI-Response" className="text-xs cursor-pointer font-medium">OpenAI-Response</SelectItem>
+                        <SelectItem value="Gemini" className="text-xs cursor-pointer font-medium text-blue-600 dark:text-blue-400">Gemini (预设)</SelectItem>
+                        <SelectItem value="Anthropic" className="text-xs cursor-pointer font-medium">Anthropic</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* 2. 自定义 Base URL 输入框 (独占一行全宽) */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                      自定义 Base URL 地址 (留空即使用官方默认)
+                    </span>
+                    <Input
+                      type="text"
+                      placeholder={
+                        settings.geminiApiFormat === 'OpenAI' || settings.geminiApiFormat === 'OpenAI-Response'
+                          ? 'https://api.openai.com'
+                          : settings.geminiApiFormat === 'Anthropic'
+                          ? 'https://api.anthropic.com'
+                          : 'https://generativelanguage.googleapis.com'
+                      }
+                      value={settings.geminiApiUrl || ''}
+                      onChange={(e) => {
+                        setSettings(s => ({ ...s, geminiApiUrl: e.target.value }))
+                        setGeminiVerified(false)
+                        setGeminiResult(null)
+                      }}
+                      className="h-9.5 bg-slate-100/70 dark:bg-slate-900/80 border-0 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-200 focus-visible:bg-white dark:focus-visible:bg-slate-900 transition-all"
+                    />
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono pt-1 break-all leading-relaxed">
+                      预览请求地址：<span className="text-slate-600 dark:text-slate-300 font-medium">{getApiPreviewUrl(settings.geminiApiFormat, settings.geminiApiUrl, settings.geminiModel)}</span>
+                    </p>
+                  </div>
+
+                  {/* 3. API Key 输入框 (独占一行全宽) */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                      API 密钥 (Key)
+                    </span>
+                    <div className="relative">
+                      <Input
+                        id="gemini-key"
+                        type={showGeminiKey ? 'text' : 'password'}
+                        placeholder="输入 API Key"
+                        value={settings.geminiApiKey}
+                        onChange={(e) => {
+                          setSettings(s => ({ ...s, geminiApiKey: e.target.value }))
+                          setGeminiVerified(false)
+                          setGeminiResult(null)
+                        }}
+                        className="h-9.5 bg-slate-100/70 dark:bg-slate-900/80 border-0 rounded-xl pr-10 text-xs font-mono text-slate-800 dark:text-slate-200 focus-visible:bg-white dark:focus-visible:bg-slate-900 transition-all"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        type="button"
+                        onClick={() => setShowGeminiKey(!showGeminiKey)}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 h-7 w-7 rounded-lg"
+                      >
+                        {showGeminiKey ? <EyeOff className="w-3.5 h-3.5 stroke-[1.5]" /> : <Eye className="w-3.5 h-3.5 stroke-[1.5]" />}
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 pt-0.5">
+                      多个密钥使用逗号分隔
+                    </p>
                   </div>
                 </div>
 
-                <div className="space-y-1.5 pt-1">
+                <div className="space-y-1.5 pt-1 border-t border-slate-200/50 dark:border-slate-700/40">
                   <div className="flex items-center justify-between gap-1 flex-wrap">
-                    <a
-                      href="https://aistudio.google.com/api-keys"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
-                    >
-                      <ExternalLink className="w-3 h-3 text-slate-400 stroke-[1.5]" />
-                      获取 Key
-                    </a>
+                    {(() => {
+                      const keyConsole = getApiKeyConsoleUrl(settings.geminiApiUrl, settings.geminiApiFormat)
+                      return (
+                        <a
+                          href={keyConsole.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                        >
+                          <ExternalLink className="w-3 h-3 text-slate-400 stroke-[1.5]" />
+                          {keyConsole.label}
+                        </a>
+                      )
+                    })()}
                     <div className="flex items-center gap-1 shrink-0">
                       <Button
                         type="button"
@@ -444,7 +682,7 @@ export default function SettingsPanel() {
                     </div>
                   </div>
 
-                  {/* Gemini 微细内联状态提示 */}
+                  {/* 微细内联状态提示 */}
                   {geminiResult && (
                     <div className={`text-[11px] flex items-center gap-1.5 px-1 py-0.5 ${
                       geminiResult.type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
@@ -460,7 +698,7 @@ export default function SettingsPanel() {
                 </div>
               </div>
 
-              {/* 小米 TTS 密钥面板 */}
+              {/* 小米 TTS 密钥面板 (第二行，全宽) */}
               <div className="p-4 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 space-y-3 flex flex-col justify-between transition-all">
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -660,7 +898,84 @@ export default function SettingsPanel() {
               </div>
             </div>
 
-            {/* 行三：视频转译与播放体验模式 */}
+            {/* 行三：合成原声音量调节与静音 */}
+            <div className="space-y-2 pt-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {(settings.originalAudioVolume ?? 0.2) > 0 ? (
+                    <Volume2 className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 stroke-[1.5]" />
+                  ) : (
+                    <VolumeX className="w-3.5 h-3.5 text-rose-500 stroke-[1.5]" />
+                  )}
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    视频原声保留音量 (Original Audio Volume)
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
+                    {(settings.originalAudioVolume ?? 0.2) <= 0
+                      ? '已静音 (0%)'
+                      : `${Math.round((settings.originalAudioVolume ?? 0.2) * 100)}%`}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setSettings((s) => ({
+                        ...s,
+                        originalAudioVolume: (s.originalAudioVolume ?? 0.2) > 0 ? 0.0 : 0.2,
+                      }))
+                    }
+                    className={`h-6 px-2 text-[11px] font-medium rounded-lg transition-colors ${
+                      (settings.originalAudioVolume ?? 0.2) <= 0
+                        ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {(settings.originalAudioVolume ?? 0.2) > 0 ? '静音原声' : '开启原声 (20%)'}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800/80 space-y-2">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSettings((s) => ({ ...s, originalAudioVolume: 0.0 }))}
+                    title="彻底关掉/静音原声 (0%)"
+                    className="p-0.5 rounded text-slate-400 hover:text-rose-500 transition-colors shrink-0 border-0 bg-transparent cursor-pointer"
+                  >
+                    <VolumeX className="w-4 h-4" />
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={Math.round((settings.originalAudioVolume ?? 0.2) * 100)}
+                    onChange={(e) => {
+                      const val = Math.max(0, Math.min(100, Number(e.target.value))) / 100
+                      setSettings((s) => ({ ...s, originalAudioVolume: val }))
+                    }}
+                    className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-600 dark:accent-purple-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setSettings((s) => ({ ...s, originalAudioVolume: 1.0 }))}
+                    title="设置为最大原声音量 (100%)"
+                    className="p-0.5 rounded text-slate-400 hover:text-purple-600 transition-colors shrink-0 border-0 bg-transparent cursor-pointer"
+                  >
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  调整合成视频中源音轨（如英文原音）的混音保留音量。设置为 0% 即彻底关闭原音，仅保留译文配音。
+                </p>
+              </div>
+            </div>
+
+            {/* 行四：视频转译与播放体验模式 */}
             <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
               <div className="flex items-center gap-2">
                 <Zap className="w-3.5 h-3.5 text-purple-500 stroke-[1.5]" />

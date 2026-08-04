@@ -19,10 +19,13 @@ class TaskStartRequest(BaseModel):
     gemini_api_key: str
     mimo_api_key: str = ""
     gemini_model: Optional[str] = "gemini-2.0-flash"
+    gemini_api_url: Optional[str] = ""
+    gemini_api_format: Optional[str] = "Gemini"
     voice: str = "冰糖"
     source_lang: str = "auto"
     target_lang: str = "zh"
     stream_mode: str = "streaming"
+    original_audio_volume: float = Field(default=0.2, ge=0.0, le=1.0)
     input_file_path: Optional[str] = None
     output_dir: Optional[str] = None
 
@@ -38,6 +41,9 @@ class TaskStatusResponse(BaseModel):
     target_lang: Optional[str] = None
     voice: Optional[str] = None
     stream_mode: Optional[str] = "streaming"
+    original_audio_volume: float = 0.2
+    gemini_api_url: Optional[str] = ""
+    gemini_api_format: Optional[str] = "Gemini"
     preview_ready: bool = False
     preview_url: Optional[str] = None
     preview_duration: float = 0.0

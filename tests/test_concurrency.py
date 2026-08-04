@@ -35,7 +35,7 @@ def test_translation_batches_run_with_bounded_concurrency(monkeypatch, tmp_path)
         async def __aexit__(self, *args) -> None:
             pass
 
-        async def post(self, _url: str, json: dict) -> _FakeResponse:
+        async def post(self, _url: str, json: dict, **_kwargs) -> _FakeResponse:
             nonlocal active, peak
             active += 1
             peak = max(peak, active)

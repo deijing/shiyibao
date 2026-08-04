@@ -102,6 +102,8 @@ app.include_router(env.router, prefix="/api")
 
 @app.get("/api/health")
 async def health() -> dict:
+    from .services.hwaccel import describe_acceleration
+
     ffmpeg_path = find_media_binary("ffmpeg")
     ffprobe_path = find_media_binary("ffprobe")
     system = platform.system()
@@ -111,6 +113,12 @@ async def health() -> dict:
         install_hint = "可运行 “winget install Gyan.FFmpeg”，安装后重新启动应用。"
     else:
         install_hint = "请通过系统包管理器安装 ffmpeg 与 ffprobe，然后重新启动应用。"
+    hwaccel = None
+    if ffmpeg_path:
+        try:
+            hwaccel = await describe_acceleration()
+        except Exception:
+            hwaccel = None
     return {
         "status": "ok",
         "data_dir": str(APP_DATA_DIR),
@@ -120,6 +128,7 @@ async def health() -> dict:
             "ffprobe_path": ffprobe_path,
             "download_url": "https://ffmpeg.org/download.html",
             "install_hint": install_hint,
+            "hwaccel": hwaccel,
         },
     }
 

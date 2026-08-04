@@ -43,6 +43,184 @@ def _extract_json_array(text: str) -> list:
         raise
 
 
+def pick_api_key(raw_key: str, index: int = 0) -> str:
+    """对以逗号分隔的多密钥文本进行切分，并按索引进行轮询调度。"""
+    if not raw_key:
+        return ""
+    keys = [k.strip() for k in raw_key.replace("，", ",").split(",") if k.strip()]
+    if not keys:
+        return ""
+    return keys[index % len(keys)]
+
+
+def build_ai_request_args(
+    api_format: str,
+    base_url: str,
+    model: str,
+    api_key: str,
+    system_prompt: str,
+    user_prompt: str,
+) -> tuple[str, dict, dict, Callable[[dict], str]]:
+    """根据 api_format (Gemini / OpenAI / OpenAI-Response / Anthropic) 构造 (url, headers, payload, extract_text_fn)。"""
+    fmt = (api_format or "Gemini").strip()
+    clean_base = (base_url or "").strip().rstrip("/")
+    clean_model = (model or "gemini-2.0-flash").replace("models/", "")
+    actual_key = pick_api_key(api_key, 0)
+
+    if fmt == "OpenAI-Response":
+        default_base = "https://api.openai.com"
+        root_url = clean_base if clean_base else default_base
+        if "/responses" in root_url:
+            url = root_url
+        elif root_url.endswith("/v1"):
+            url = f"{root_url}/responses"
+        else:
+            url = f"{root_url}/v1/responses"
+
+        headers = {
+            "Authorization": f"Bearer {actual_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": clean_model if clean_model else "gpt-4o-mini",
+            "instructions": system_prompt,
+            "input": user_prompt,
+            "temperature": 0.3,
+        }
+
+        def extract_text(data: dict) -> str:
+            if "output_text" in data and data["output_text"]:
+                return str(data["output_text"])
+            if "output" in data and isinstance(data["output"], list):
+                out_parts = []
+                for item in data["output"]:
+                    if isinstance(item, dict):
+                        content = item.get("content")
+                        if isinstance(content, str):
+                            out_parts.append(content)
+                        elif isinstance(content, list):
+                            for sub in content:
+                                if isinstance(sub, dict) and "text" in sub:
+                                    out_parts.append(sub["text"])
+                                elif isinstance(sub, str):
+                                    out_parts.append(sub)
+                if out_parts:
+                    return "".join(out_parts)
+            if "choices" in data and len(data["choices"]) > 0:
+                msg = data["choices"][0].get("message", {})
+                content = msg.get("content")
+                if isinstance(content, str):
+                    return content
+            raise KeyError(f"无法解析 OpenAI-Response 响应内容: {list(data.keys())}")
+
+        return url, headers, payload, extract_text
+
+    elif fmt == "OpenAI":
+        default_base = "https://api.openai.com"
+        root_url = clean_base if clean_base else default_base
+        if "/chat/completions" in root_url:
+            url = root_url
+        elif root_url.endswith("/v1"):
+            url = f"{root_url}/chat/completions"
+        else:
+            url = f"{root_url}/v1/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {actual_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": clean_model if clean_model else "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.3,
+            "response_format": {"type": "json_object"},
+        }
+
+        def extract_text(data: dict) -> str:
+            if "choices" in data and len(data["choices"]) > 0:
+                msg = data["choices"][0].get("message", {})
+                content = msg.get("content")
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+            if "output_text" in data:
+                return str(data["output_text"])
+            raise KeyError(f"无法解析 OpenAI 响应内容: {list(data.keys())}")
+
+        return url, headers, payload, extract_text
+
+    elif fmt == "Anthropic":
+        default_base = "https://api.anthropic.com"
+        root_url = clean_base if clean_base else default_base
+        if "/messages" in root_url:
+            url = root_url
+        elif root_url.endswith("/v1"):
+            url = f"{root_url}/messages"
+        else:
+            url = f"{root_url}/v1/messages"
+
+        headers = {
+            "x-api-key": actual_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": clean_model if clean_model else "claude-3-5-sonnet-20241022",
+            "system": system_prompt,
+            "messages": [
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": 4096,
+            "temperature": 0.3,
+        }
+
+        def extract_text(data: dict) -> str:
+            content_list = data.get("content", [])
+            if content_list and isinstance(content_list, list):
+                for item in content_list:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        return item.get("text", "")
+                    if isinstance(item, dict) and "text" in item:
+                        return item.get("text", "")
+            raise KeyError(f"无法解析 Anthropic 响应内容: {list(data.keys())}")
+
+        return url, headers, payload, extract_text
+
+    else:
+        # Default: Gemini
+        default_base = "https://generativelanguage.googleapis.com"
+        root_url = clean_base if clean_base else default_base
+        if ":generateContent" in root_url:
+            url = root_url
+        elif "/v1beta/models/" in root_url:
+            url = f"{root_url}:generateContent"
+        elif root_url.endswith("/v1beta"):
+            url = f"{root_url}/models/{clean_model}:generateContent"
+        else:
+            url = f"{root_url}/v1beta/models/{clean_model}:generateContent"
+
+        headers = {
+            "x-goog-api-key": actual_key,
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": [
+                {"role": "user", "parts": [{"text": user_prompt}]}
+            ],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.3},
+        }
+
+        def extract_text(data: dict) -> str:
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+
+        return url, headers, payload, extract_text
+
+
 async def translate_subtitles(
     task_dir: Path,
     segments: list[dict],
@@ -50,14 +228,14 @@ async def translate_subtitles(
     target_lang: str = "zh",
     gemini_model: str = "gemini-2.0-flash",
     source_lang: str = "auto",
+    gemini_api_url: str = "",
+    gemini_api_format: str = "Gemini",
     log_cb: Callable[..., None] | None = None,
     skip_translated: bool = False,
 ) -> list[dict]:
-    """通过 Gemini API 将每个分段的 source_text 翻译为 target_lang。
+    """通过 AI 大模型 API 将每个分段的 source_text 翻译为 target_lang。
 
-    当 ``skip_translated`` 为 True 时，已包含 ``translated_text`` 的分段
-    （例如由快速预览通道生成）会保持不变且不发送 API 请求，从而避免重复工作与成本。
-    仍会持久化并返回完整的 ``segments`` 列表。
+    支持 Gemini、OpenAI、OpenAI-Response 与 Anthropic 四种协议格式。
     """
     target_lang_name = LANG_NAMES.get(target_lang, "Chinese")
     source_lang_name = LANG_NAMES.get(source_lang, None) if source_lang and source_lang != "auto" else None
@@ -80,8 +258,6 @@ async def translate_subtitles(
             "with sentence-ending punctuation, but leave a comma after a fragment that "
             "clearly continues into the next item. Never add line breaks inside an item."
         )
-    clean_model = (gemini_model or "gemini-2.0-flash").replace("models/", "")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
 
     performance = get_performance_settings()
     batch_size = performance.translate_batch_size
@@ -95,8 +271,6 @@ async def translate_subtitles(
     ]
     async with httpx.AsyncClient(
         timeout=120.0,
-        # key 只走请求头：写在 query string 里会被 httpx 日志与任何中间代理原样记下来。
-        headers={"x-goog-api-key": gemini_api_key},
         limits=httpx.Limits(
             max_connections=performance.translate_concurrency,
             max_keepalive_connections=performance.translate_concurrency,
@@ -104,43 +278,45 @@ async def translate_subtitles(
     ) as client:
         async def translate_batch(batch_start: int, batch: list[dict]) -> tuple[int, list[dict], list]:
             source_texts = [seg["source_text"] for seg in batch]
-            body = {
-                "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "contents": [
-                    {"role": "user", "parts": [{"text": json.dumps(source_texts, ensure_ascii=False)}]}
-                ],
-                "generationConfig": {"responseMimeType": "application/json", "temperature": 0.3},
-            }
+            user_prompt = json.dumps(source_texts, ensure_ascii=False)
+
+            current_key = pick_api_key(gemini_api_key, batch_start)
+            url, headers, body, extract_text = build_ai_request_args(
+                gemini_api_format,
+                gemini_api_url,
+                gemini_model,
+                current_key,
+                system_prompt,
+                user_prompt,
+            )
 
             translations: list = []
             async with translate_limiter.slot():
                 for attempt in range(MAX_RETRIES):
                     try:
-                        resp = await client.post(url, json=body)
+                        resp = await client.post(url, headers=headers, json=body)
                         if resp.status_code == 429 or resp.status_code >= 500:
                             raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
                         resp.raise_for_status()
                         data = resp.json()
-                        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+                        raw = extract_text(data)
                         translations = _extract_json_array(raw)
                         break
                     except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError) as exc:
                         if attempt == MAX_RETRIES - 1:
-                            logger.error("Gemini API 调用失败 (已重试 %d 次): %s", MAX_RETRIES, exc)
+                            logger.error("AI 翻译 API 调用失败 (已重试 %d 次): %s", MAX_RETRIES, exc)
                             if log_cb:
-                                log_cb("AI 翻译", f"Gemini 接口响应异常: {exc}", "error")
+                                log_cb("AI 翻译", f"AI 接口响应异常: {exc}", "error")
                             break
                         wait = RETRY_BACKOFF_BASE ** (attempt + 1)
-                        logger.warning("Gemini API 第 %d 次重试，等待 %.1fs: %s", attempt + 1, wait, exc)
+                        logger.warning("AI 翻译 API 第 %d 次重试，等待 %.1fs: %s", attempt + 1, wait, exc)
                         if log_cb:
                             log_cb("AI 翻译", f"触发速率限制/网络波动，第 {attempt + 1} 次重试中 (等待 {wait:.1f}s)...", "api")
                         await asyncio.sleep(wait)
                     except (KeyError, IndexError, json.JSONDecodeError) as exc:
-                        # 结构异常多半是内容安全拦截或配额提示，重试无用；但必须留下原因，
-                        # 否则这一批只会静默回落成原文。
-                        logger.error("Gemini 响应结构异常，本批未翻译: %s", exc)
+                        logger.error("AI 响应结构异常，本批未翻译: %s", exc)
                         if log_cb:
-                            log_cb("AI 翻译", f"Gemini 返回内容无法解析，本批未翻译: {exc}", "error")
+                            log_cb("AI 翻译", f"AI 返回内容无法解析，本批未翻译: {exc}", "error")
                         break
 
             return batch_start, batch, translations
@@ -157,14 +333,11 @@ async def translate_subtitles(
                 translated = str(translations[i]) if i < len(translations) and translations[i] else ""
                 if translated:
                     seg["translated_text"] = translated
-                    # 显式写 False：重跑时会复用同一批 segments，上一轮的回落标记不能残留。
                     seg["translated_fallback"] = False
                     if log_cb:
                         log_cb("AI 翻译", f"句 [{idx}/{len(pending)}] 翻译完成: \"{seg['source_text']}\" ➔ \"{seg['translated_text']}\"", "api")
                     continue
 
-                # 回落到原文。下游（task.py）靠 translated_fallback 判断是报错还是告警，
-                # 空白原文本来就没有可译内容，不计入回落。
                 is_fallback = bool(str(seg["source_text"]).strip())
                 seg["translated_text"] = seg["source_text"]
                 seg["translated_fallback"] = is_fallback
@@ -177,7 +350,7 @@ async def translate_subtitles(
             log_cb(
                 "AI 翻译",
                 f"共 {len(pending)} 条字幕中有 {fallback_count} 条未翻译，已保留原文，"
-                "请检查 Gemini Key、模型配额与网络后重试",
+                "请检查 AI Key、Base URL 与协议格式配置后重试",
                 "error",
             )
 
@@ -190,6 +363,8 @@ async def summarize_video_title(
     segments: list[dict],
     gemini_api_key: str = "",
     gemini_model: str = "gemini-2.0-flash",
+    gemini_api_url: str = "",
+    gemini_api_format: str = "Gemini",
 ) -> str:
     """根据字幕分段自动总结精炼的中文视频标题（6-16字）。"""
     if not segments:
@@ -224,31 +399,28 @@ async def summarize_video_title(
     if not gemini_api_key:
         return _local_fallback()
 
-    model_name = gemini_model or "gemini-2.0-flash"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-    headers = {"Content-Type": "application/json", "x-goog-api-key": gemini_api_key}
+    sys_prompt = "你是一个专业精炼的视频内容编辑。请根据输入的字幕内容，总结出一个吸引人且准确描述核心内容的视频中文标题（长度控制在 6-16 字以内）。仅输出最终标题文字本身，绝不要带有任何引号、冒号、序号、解释说明或标点符号。"
+    usr_prompt = f"字幕文本：\n{context[:1000]}"
 
-    prompt = (
-        "你是一个专业精炼的视频内容编辑。请根据以下视频开篇字幕内容，总结出一个吸引人且准确描述核心内容的视频中文标题（长度控制在 6-16 字以内）。"
-        "仅输出最终标题文字本身，绝不要带有任何引号、冒号、序号、解释说明或标点符号：\n\n"
-        f"字幕文本：\n{context[:1000]}"
+    url, headers, payload, extract_text = build_ai_request_args(
+        gemini_api_format,
+        gemini_api_url,
+        gemini_model,
+        gemini_api_key,
+        sys_prompt,
+        usr_prompt,
     )
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 40},
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code == 200:
+            if resp.is_success:
                 data = resp.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                text = extract_text(data).strip()
                 text = text.replace('"', '').replace('"', '').replace('《', '').replace('》', '').replace(':', '').replace('：', '').strip()
                 if text and len(text) >= 2:
                     return text[:30]
     except Exception as e:
-        logger.warning("Gemini title generation failed, falling back to local extractor: %s", e)
+        logger.warning("AI title generation failed, falling back to local extractor: %s", e)
 
     return _local_fallback()

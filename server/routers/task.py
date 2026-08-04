@@ -206,6 +206,7 @@ def _status(meta: dict) -> TaskStatusResponse:
         target_lang=meta.get("target_lang"),
         voice=meta.get("voice"),
         stream_mode=meta.get("stream_mode", "streaming"),
+        original_audio_volume=meta.get("original_audio_volume", 0.2),
         preview_ready=meta.get("preview_ready", False),
         preview_url=meta.get("preview_url"),
         preview_duration=meta.get("preview_duration", 0.0),
@@ -266,7 +267,8 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
     try:
         video_path = _find_video(task_id)
         log_cb("系统", f"初始化转译引擎，解析输入视频文件: {video_path.name}")
-        _update_meta(task_id, stream_mode=req.stream_mode)
+        orig_vol = max(0.0, float(getattr(req, "original_audio_volume", 0.2)))
+        _update_meta(task_id, stream_mode=req.stream_mode, original_audio_volume=orig_vol)
 
         _update_meta(task_id, stage=TaskStage.EXTRACTING_AUDIO.value, progress=10,
                      message="提取音频", error=None)
@@ -283,13 +285,18 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
         source_lang = req.source_lang or "auto"
         if source_lang == "auto":
             detected_code, detected_name = await language_detector.detect_language_from_text(
-                segments, gemini_api_key=req.gemini_api_key, gemini_model=req.gemini_model
+                segments,
+                gemini_api_key=req.gemini_api_key,
+                gemini_model=req.gemini_model,
+                gemini_api_url=req.gemini_api_url or "",
+                gemini_api_format=req.gemini_api_format or "Gemini",
             )
             source_lang = detected_code
             log_cb("语音识别", f"✨ 自动识别原声语言成功：{detected_name} ({detected_code})", "success")
             _update_meta(task_id, source_lang=detected_code)
 
         model_name = (req.gemini_model or "gemini-2.0-flash").replace("models/", "")
+        api_format = req.gemini_api_format or "Gemini"
         mimo_api_key = req.mimo_api_key.strip() or MIMO_API_KEY
         if not mimo_api_key:
             raise RuntimeError("未配置小米 MiMo TTS Key，请在设置中填写或配置 MIMO_API_KEY")
@@ -298,10 +305,13 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
         # 不受后续如何切分渲染 chunk 的影响。
         _update_meta(task_id, stage=TaskStage.TRANSLATING.value, progress=45,
                      message="翻译全片字幕中")
-        log_cb("AI 翻译", f"正在请求 Gemini 大模型 [{model_name}] 翻译字幕 (源语言: {source_lang}, 目标语言: {req.target_lang})...", "api")
+        log_cb("AI 翻译", f"正在请求 [{api_format}] 协议大模型 [{model_name}] 翻译字幕 (源语言: {source_lang}, 目标语言: {req.target_lang})...", "api")
         segments = await translate.translate_subtitles(
             task_dir, segments, req.gemini_api_key, req.target_lang, req.gemini_model,
-            source_lang=source_lang, log_cb=log_cb,
+            source_lang=source_lang,
+            gemini_api_url=req.gemini_api_url or "",
+            gemini_api_format=api_format,
+            log_cb=log_cb,
         )
 
         # 翻译失败的分段会被回落成原文，配出来的音听着像「给原文配了音」。
@@ -316,17 +326,23 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                      translation_total=total_segments)
         if total_segments > 0 and fallback_count == total_segments:
             raise RuntimeError(
-                "Gemini 翻译全部失败，字幕仍是原文，已终止任务。"
-                "请检查 Gemini API Key、账号配额与网络连通性后重试"
+                f"{api_format} AI 翻译全部失败，字幕仍是原文，已终止任务。"
+                "请检查 API Key、Base URL、网络连通性与模型配额后重试"
             )
         if fallback_count:
             log_cb("AI 翻译", f"⚠️ 有 {fallback_count}/{total_segments} 条字幕翻译失败，"
                              f"这些分段将保留原文并按原文配音，建议稍后重试整片转译。", "error")
-        log_cb("AI 翻译", "Gemini 深度上下文润色与全片字幕翻译完成", "success")
+        log_cb("AI 翻译", f"[{api_format}] 深度上下文润色与全片字幕翻译完成", "success")
 
         # 智能总结视频标题
         try:
-            video_title = await translate.summarize_video_title(segments, gemini_api_key=req.gemini_api_key, gemini_model=req.gemini_model)
+            video_title = await translate.summarize_video_title(
+                segments,
+                gemini_api_key=req.gemini_api_key,
+                gemini_model=req.gemini_model,
+                gemini_api_url=req.gemini_api_url or "",
+                gemini_api_format=api_format,
+            )
             if video_title:
                 _update_meta(task_id, video_title=video_title)
                 log_cb("AI 翻译", f"智能生成视频标题: \"{video_title}\"", "info")
@@ -365,7 +381,10 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                     log_cb=log_cb, out_filename=f"dub_{i:03d}.wav",
                     track_duration=w_dur,
                 )
-                chunk_path = await mixer.merge_chunk(task_dir, video_path, rel_segs, w_start, w_dur, i)
+                chunk_path = await mixer.merge_chunk(
+                    task_dir, video_path, rel_segs, w_start, w_dur, i,
+                    original_volume=orig_vol,
+                )
                 chunk_paths.append(chunk_path)
                 manifest.append({
                     "index": i,
@@ -409,7 +428,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             _update_meta(task_id, stage=TaskStage.MIXING.value, progress=95,
                          message="合成全片视频中")
             log_cb("视频合并", "启动 FFmpeg 全片画面、配音音轨与字幕轨高精度合并...")
-            await mixer.merge(task_dir, video_path, segments)
+            await mixer.merge(task_dir, video_path, segments, original_volume=orig_vol)
             log_cb("视频合并", "高清成片渲染完毕，输出 final.mp4 导出准备就绪", "success")
 
         _update_meta(task_id, stage=TaskStage.COMPLETE.value, progress=100,
@@ -480,7 +499,8 @@ async def start_task(task_id: str, req: TaskStartRequest) -> TaskStatusResponse:
 
     _update_meta(task_id, stage=TaskStage.PENDING.value, progress=0,
                  message="已开始", error=None, source_lang=req.source_lang, target_lang=req.target_lang,
-                 voice=req.voice, gemini_model=req.gemini_model)
+                 voice=req.voice, gemini_model=req.gemini_model, original_audio_volume=req.original_audio_volume,
+                 gemini_api_url=req.gemini_api_url, gemini_api_format=req.gemini_api_format)
 
     task = asyncio.create_task(_run_pipeline(task_id, req))
     _background_tasks.add(task)
