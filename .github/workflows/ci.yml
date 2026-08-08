@@ -23,6 +23,10 @@ jobs:
           python-version: "3.12"
           cache: pip
       - uses: FedericoCarboni/setup-ffmpeg@v2
+        if: matrix.os != 'macos-latest'
+      - name: Install FFmpeg on macOS
+        if: matrix.os == 'macos-latest'
+        run: brew install ffmpeg
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
       - uses: actions/setup-node@v4
