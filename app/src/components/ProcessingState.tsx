@@ -10,6 +10,8 @@ import {
   Radio,
   Copy,
   Sparkles,
+  Wand2,
+  RotateCcw,
   Volume2,
   Maximize2,
   Loader2,
@@ -18,7 +20,7 @@ import {
   ShieldCheck,
   ChevronRight,
 } from 'lucide-react'
-import { getTaskStatus, getTaskLogs, getSubtitles, type TaskStatus, type TaskLogItem, type SubtitleSegment } from '@/lib/api'
+import { getTaskStatus, getTaskLogs, getSubtitles, startTask, type TaskStatus, type TaskLogItem, type SubtitleSegment } from '@/lib/api'
 import { clearActiveTaskId } from '@/lib/task-session'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
@@ -137,6 +139,37 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
   const completedRef = useRef(false)
   const logsContainerRef = useRef<HTMLDivElement | null>(null)
 
+  const [isRetrying, setIsRetrying] = useState(false)
+
+  const handleRetry = async () => {
+    if (!taskId) return
+    setIsRetrying(true)
+    setError(null)
+    try {
+      const config = {
+        gemini_api_key: settings.geminiApiKey,
+        mimo_api_key: settings.xiaomiTtsKey,
+        gemini_model: settings.geminiModel,
+        gemini_api_url: settings.geminiApiUrl,
+        gemini_api_format: settings.geminiApiFormat,
+        voice: settings.mimoVoice,
+        source_lang: status?.source_lang || settings.sourceLang,
+        target_lang: status?.target_lang || settings.targetLang,
+        stream_mode: (status?.stream_mode as 'streaming' | 'batch') || 'streaming',
+        original_audio_volume: status?.original_audio_volume ?? settings.originalAudioVolume ?? 0.2,
+      }
+      await startTask(taskId, config)
+      await pollData()
+      if (!intervalRef.current) {
+        intervalRef.current = setInterval(pollData, 1500)
+      }
+    } catch (err: any) {
+      setError(err.message || '从断点恢复任务失败，请检查设置与网络')
+    } finally {
+      setIsRetrying(false)
+    }
+  }
+
   const pollData = useCallback(async () => {
     try {
       const [s, latestLogs, realSubs] = await Promise.all([
@@ -252,9 +285,11 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
           <Radio className="w-3.5 h-3.5 animate-pulse" />
           沉浸式聚焦引擎 (Live Stream Focus Mode Active)
         </div>
-        <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-2 text-slate-900 dark:text-slate-100 flex items-center justify-center gap-2">
-          <Sparkles className="w-6 h-6 text-purple-500 animate-spin" />
-          AI 视频智能转译控制台
+        <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-2 text-slate-900 dark:text-slate-100 flex items-center justify-center gap-2.5">
+          <div className="p-2 rounded-xl bg-gradient-to-br from-purple-500/20 via-purple-500/10 to-indigo-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 shadow-2xs shrink-0">
+            <Wand2 className="w-5.5 h-5.5" />
+          </div>
+          <span>AI 视频智能转译控制台</span>
         </h2>
         <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2.5 mt-3 text-xs">
           <span className="text-slate-500 dark:text-slate-400 font-medium mr-1 text-xs">全自动协同</span>
@@ -277,12 +312,22 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
       </div>
 
       {error && (
-        <div className="w-full max-w-4xl mb-6 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 text-xs sm:text-sm flex items-center gap-3 shadow-lg animate-bounce">
-          <AlertCircle className="w-5 h-5 shrink-0" />
-          <div className="flex-grow">
-            <span className="font-bold mr-1">处理遇到异常:</span>
-            {error}
+        <div className="w-full max-w-4xl mb-6 p-4 rounded-2xl bg-rose-50/90 dark:bg-rose-950/60 border border-rose-200/80 dark:border-rose-900/80 text-rose-700 dark:text-rose-300 text-xs sm:text-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5 shadow-lg animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-start sm:items-center gap-3 flex-grow">
+            <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5 sm:mt-0" />
+            <div>
+              <span className="font-extrabold mr-1.5 text-rose-900 dark:text-rose-200">处理遇到异常:</span>
+              <span>{error}</span>
+            </div>
           </div>
+          <button
+            onClick={handleRetry}
+            disabled={isRetrying}
+            className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 active:scale-95 text-white font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RotateCcw className={`w-4 h-4 ${isRetrying ? 'animate-spin' : ''}`} />
+            <span>{isRetrying ? '正在从断点恢复...' : '一键重试 / 从断点继续'}</span>
+          </button>
         </div>
       )}
 
