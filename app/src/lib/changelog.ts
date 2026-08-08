@@ -12,14 +12,43 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.5'
+export const CURRENT_VERSION = 'v0.1.6'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
+  {
+    version: 'v0.1.6',
+    date: '2026-08-08',
+    title: '全流程无缝断点续传、AIMD 动态控速与标语工程目录升级',
+    isLatest: true,
+    highlights: [
+      '全流程五重 Checkpoint 断点复用检查，音轨/ASR/翻译/切片极速秒级复用，支持一键无感断点恢复',
+      '全新 AIMD 动态自适应速率调节器，智能防御 AI 大模型 429 Rate Limit 限流与自动探顶冲刺',
+      '规范自包含工程文件夹架构，AI 总结标题后自动生成直观标语快捷工程目录并支持一键用访达打开',
+      '控制台升级高级微光魔术棒 Icon 徽章，异常提示栏增加「一键重试 / 从断点继续」高亮操作按钮',
+    ],
+    details: {
+      features: [
+        '实现五重 Checkpoint 检查点检测机制（audio.aac、subtitles_src.json、subtitles_zh.json、chunk_XXX.mp4、final.mp4），大幅减少重复计算',
+        '实现 AIMD (加性增大/乘性减小) 拥塞控制算法速率调节器，支持 429 指数退避、Retry-After 响应头解析与多 Key 轮换',
+        '生成自包含工程文件夹，并在 workspace/projects/ 创建带【视频总结标题】的软链接快捷工程目录',
+        '新增 POST /api/task/{task_id}/open_folder 跨平台接口，支持一键调起 macOS Finder / Windows 资源管理器',
+        'ProcessingState 控制台新增「一键重试 / 从断点继续」交互按钮，异常时可直接点选恢复',
+      ],
+      improvements: [
+        '控制台 Header Icon 替换为静态高级 Wand2 徽章，移除旋转动画，提升 UI 优雅度与高级感',
+        '应用数据根目录平滑迁移为纯英文 yishibao 规范名称（~/Library/Application Support/yishibao），确保老用户数据无缝继承',
+        'GitHub CI/CD 工作流新增 setup-ffmpeg 环境准备步骤，提升云端自动化测试成功率',
+      ],
+      fixes: [
+        '修复部分 API 厂商遭遇 429 时无渐进式退避导致任务直接失败的问题',
+        '修复中断重启后已合成切片重复渲染消耗时间的问题',
+      ],
+    },
+  },
   {
     version: 'v0.1.5',
     date: '2026-07-29',
     title: '本地接口访问控制加固与失败可见性修复',
-    isLatest: true,
     highlights: [
       '修复本地接口可被浏览器中任意网页读取，导致 Gemini 与 MiMo 密钥泄露的问题',
       '翻译失败不再静默保留原文假装成功：全片失败明确报错，部分失败在日志中告警',
