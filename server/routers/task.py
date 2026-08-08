@@ -270,30 +270,52 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
         orig_vol = max(0.0, float(getattr(req, "original_audio_volume", 0.2)))
         _update_meta(task_id, stream_mode=req.stream_mode, original_audio_volume=orig_vol)
 
-        _update_meta(task_id, stage=TaskStage.EXTRACTING_AUDIO.value, progress=10,
-                     message="提取音频", error=None)
-        log_cb("音频提取", "启动 FFmpeg 提取原视频 16kHz PCM 单声道音频流...")
-        audio_path = await audio.extract_audio(task_dir, video_path)
-        log_cb("音频提取", "音频轨道分离完成，格式转化为高保真无损 AAC", "success")
+        # 1. 音频提取阶段（断点续传检查）
+        audio_path = task_dir / "audio.aac"
+        if audio_path.exists() and audio_path.stat().st_size > 100:
+            log_cb("音频提取", "⚡ 发现已有提取好的音频缓存 audio.aac，秒级跳过音频提取", "success")
+        else:
+            _update_meta(task_id, stage=TaskStage.EXTRACTING_AUDIO.value, progress=10,
+                         message="提取音频", error=None)
+            log_cb("音频提取", "启动 FFmpeg 提取原视频 16kHz PCM 单声道音频流...")
+            audio_path = await audio.extract_audio(task_dir, video_path)
+            log_cb("音频提取", "音频轨道分离完成，格式转化为高保真无损 AAC", "success")
 
-        _update_meta(task_id, stage=TaskStage.TRANSCRIBING.value, progress=30,
-                     message="语音识别中")
-        log_cb("语音识别", "启动 BcutASR (必剪云端语音识别引擎) 提取语音段落...")
-        segments = await asr.transcribe(task_dir, audio_path, log_cb=log_cb)
-        log_cb("语音识别", f"语音识别完成，共提取 {len(segments)} 条有效台词分句", "success")
+        # 2. 语音识别阶段（断点续传检查）
+        src_json = task_dir / "subtitles_src.json"
+        segments: list[dict] = []
+        if src_json.exists() and src_json.stat().st_size > 10:
+            try:
+                cached_src = json.loads(src_json.read_text(encoding="utf-8"))
+                if isinstance(cached_src, list) and len(cached_src) > 0:
+                    segments = cached_src
+                    log_cb("语音识别", f"⚡ 发现已有语音识别缓存 subtitles_src.json (共 {len(segments)} 条句落)，秒级跳过 ASR", "success")
+            except Exception:
+                segments = []
+
+        if not segments:
+            _update_meta(task_id, stage=TaskStage.TRANSCRIBING.value, progress=30,
+                         message="语音识别中")
+            log_cb("语音识别", "启动 BcutASR (必剪云端语音识别引擎) 提取语音段落...")
+            segments = await asr.transcribe(task_dir, audio_path, log_cb=log_cb)
+            log_cb("语音识别", f"语音识别完成，共提取 {len(segments)} 条有效台词分句", "success")
 
         source_lang = req.source_lang or "auto"
         if source_lang == "auto":
-            detected_code, detected_name = await language_detector.detect_language_from_text(
-                segments,
-                gemini_api_key=req.gemini_api_key,
-                gemini_model=req.gemini_model,
-                gemini_api_url=req.gemini_api_url or "",
-                gemini_api_format=req.gemini_api_format or "Gemini",
-            )
-            source_lang = detected_code
-            log_cb("语音识别", f"✨ 自动识别原声语言成功：{detected_name} ({detected_code})", "success")
-            _update_meta(task_id, source_lang=detected_code)
+            meta_lang = _read_meta(task_id).get("source_lang")
+            if meta_lang and meta_lang != "auto":
+                source_lang = meta_lang
+            else:
+                detected_code, detected_name = await language_detector.detect_language_from_text(
+                    segments,
+                    gemini_api_key=req.gemini_api_key,
+                    gemini_model=req.gemini_model,
+                    gemini_api_url=req.gemini_api_url or "",
+                    gemini_api_format=req.gemini_api_format or "Gemini",
+                )
+                source_lang = detected_code
+                log_cb("语音识别", f"✨ 自动识别原声语言成功：{detected_name} ({detected_code})", "success")
+                _update_meta(task_id, source_lang=detected_code)
 
         model_name = (req.gemini_model or "gemini-2.0-flash").replace("models/", "")
         api_format = req.gemini_api_format or "Gemini"
@@ -301,27 +323,40 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
         if not mimo_api_key:
             raise RuntimeError("未配置小米 MiMo TTS Key，请在设置中填写或配置 MIMO_API_KEY")
 
-        # 预先一次性完成全片翻译，确保 subtitles_*.json 始终完整且正确，
-        # 不受后续如何切分渲染 chunk 的影响。
-        _update_meta(task_id, stage=TaskStage.TRANSLATING.value, progress=45,
-                     message="翻译全片字幕中")
-        log_cb("AI 翻译", f"正在请求 [{api_format}] 协议大模型 [{model_name}] 翻译字幕 (源语言: {source_lang}, 目标语言: {req.target_lang})...", "api")
-        segments = await translate.translate_subtitles(
-            task_dir, segments, req.gemini_api_key, req.target_lang, req.gemini_model,
-            source_lang=source_lang,
-            gemini_api_url=req.gemini_api_url or "",
-            gemini_api_format=api_format,
-            log_cb=log_cb,
-        )
+        # 3. AI 翻译阶段（断点续传检查）
+        target_json = task_dir / f"subtitles_{req.target_lang}.json"
+        need_translate = True
+        if target_json.exists() and target_json.stat().st_size > 10:
+            try:
+                cached_target = json.loads(target_json.read_text(encoding="utf-8"))
+                if isinstance(cached_target, list) and len(cached_target) == len(segments):
+                    untranslated = [
+                        s for s in cached_target
+                        if not str(s.get("translated_text", "")).strip() or s.get("translated_fallback", False)
+                    ]
+                    if not untranslated:
+                        segments = cached_target
+                        need_translate = False
+                        log_cb("AI 翻译", f"⚡ 发现完整字幕翻译缓存 subtitles_{req.target_lang}.json，秒级跳过翻译", "success")
+            except Exception:
+                pass
 
-        # 翻译失败的分段会被回落成原文，配出来的音听着像「给原文配了音」。
-        # 静默走到 complete 等于骗用户，这里必须让失败可见。
-        # 只统计本轮真正送去翻译的分段：translate 侧仅对这些分段写 translated_fallback
-        # （成功 False / 失败 True），所以 skip_translated 复用旧译文时口径也不会跑偏。
+        if need_translate:
+            _update_meta(task_id, stage=TaskStage.TRANSLATING.value, progress=45,
+                         message="翻译全片字幕中")
+            log_cb("AI 翻译", f"正在请求 [{api_format}] 协议大模型 [{model_name}] 翻译字幕 (源语言: {source_lang}, 目标语言: {req.target_lang})...", "api")
+            segments = await translate.translate_subtitles(
+                task_dir, segments, req.gemini_api_key, req.target_lang, req.gemini_model,
+                source_lang=source_lang,
+                gemini_api_url=req.gemini_api_url or "",
+                gemini_api_format=api_format,
+                log_cb=log_cb,
+                skip_translated=True,  # 续传模式：保留已翻译的分段
+            )
+
         attempted = [seg for seg in segments if "translated_fallback" in seg]
         fallback_count = sum(1 for seg in attempted if seg["translated_fallback"])
         total_segments = len(attempted)
-        # 先落盘再判失败，否则全片失败的任务反而查不到计数。
         _update_meta(task_id, translation_fallback_count=fallback_count,
                      translation_total=total_segments)
         if total_segments > 0 and fallback_count == total_segments:
@@ -350,10 +385,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             logger.warning("生成视频标题失败: %s", e)
 
         if req.stream_mode != "batch" and len(segments) > 0:
-            # ---- 真正的增量流式渲染 ----
-            # 视频被切分为连续时间窗。每个窗口都会配音、混音为自包含 MP4，并在就绪后
-            # 立即发布；播放器从窗口 0 开始播放，后续窗口在后台持续渲染。缓冲条反映实际
-            # 已渲染时长，只有窗口确实尚未完成时，用户才需要等待。
+            # 4. 流式分片增量渲染阶段（断点续传检查）
             duration_total = await audio.probe_duration(video_path)
             if duration_total <= 0.0:
                 duration_total = float(segments[-1].get("end", 0.0)) + 2.0
@@ -367,6 +399,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             manifest: list[dict] = []
             chunk_paths: list[Path] = []
             for i, (w_start, w_end, w_segs) in enumerate(windows):
+                chunk_path = task_dir / f"chunk_{i:03d}.mp4"
                 w_dur = max(0.1, w_end - w_start)
                 rel_segs = [
                     {
@@ -376,15 +409,21 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                     }
                     for s in w_segs
                 ]
-                await tts.synthesize_all(
-                    task_dir, rel_segs, req.voice, mimo_api_key,
-                    log_cb=log_cb, out_filename=f"dub_{i:03d}.wav",
-                    track_duration=w_dur,
-                )
-                chunk_path = await mixer.merge_chunk(
-                    task_dir, video_path, rel_segs, w_start, w_dur, i,
-                    original_volume=orig_vol,
-                )
+
+                # 检查该 chunk 是否已在先前的渲染中成功合成过
+                if chunk_path.exists() and chunk_path.stat().st_size > 1000:
+                    log_cb("流式渲染", f"⚡ 时间窗 {i+1}/{total} 发现已渲染的 chunk_{i:03d}.mp4 缓存，秒级复用", "success")
+                else:
+                    await tts.synthesize_all(
+                        task_dir, rel_segs, req.voice, mimo_api_key,
+                        log_cb=log_cb, out_filename=f"dub_{i:03d}.wav",
+                        track_duration=w_dur,
+                    )
+                    chunk_path = await mixer.merge_chunk(
+                        task_dir, video_path, rel_segs, w_start, w_dur, i,
+                        original_volume=orig_vol,
+                    )
+
                 chunk_paths.append(chunk_path)
                 manifest.append({
                     "index": i,
@@ -402,21 +441,25 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                     progress=progress,
                     message=f"后台实时渲染中 ({completed}/{total} 段)",
                 )
-                if i == 0:
+                if i == 0 or not _read_meta(task_id).get("preview_ready"):
                     update_kwargs.update(
                         preview_ready=True,
                         preview_url=f"/api/task/{task_id}/chunk/0",
                         preview_duration=round(w_dur, 3),
                     )
-                    log_cb("⚡ 首段就绪", f"🎉 首个约 {int(w_dur)} 秒时间窗已渲染完成，播放器立即开播；后续片段将在您观看时无感续渲。", "success")
+                    if i == 0:
+                        log_cb("⚡ 首段就绪", f"🎉 首个约 {int(w_dur)} 秒时间窗已渲染完成，播放器立即开播；后续片段将在您观看时无感续渲。", "success")
                 _update_meta(task_id, **update_kwargs)
-                log_cb("流式渲染", f"时间窗 {completed}/{total} 渲染完成（{int(w_start)}s → {int(w_end)}s），已推送至播放器缓冲。", "info")
 
             _update_meta(task_id, stage=TaskStage.MIXING.value, progress=97,
                          message="合并完整成片中")
-            log_cb("视频合并", "全部时间窗渲染完成，正在无损拼接为完整成片 final.mp4...")
-            await mixer.concat_chunks(task_dir, chunk_paths)
-            log_cb("视频合并", "高清成片渲染完毕，输出 final.mp4 导出准备就绪", "success")
+            final_src = task_dir / "final.mp4"
+            if final_src.exists() and final_src.stat().st_size > 1000:
+                log_cb("视频合并", "⚡ 发现已有完整成片 final.mp4 缓存，秒级导出就绪", "success")
+            else:
+                log_cb("视频合并", "全部时间窗渲染完成，正在无损拼接为完整成片 final.mp4...")
+                await mixer.concat_chunks(task_dir, chunk_paths)
+                log_cb("视频合并", "高清成片渲染完毕，输出 final.mp4 导出准备就绪", "success")
         else:
             # ---- 批处理模式：一次性渲染全片（无流式预览） ----
             _update_meta(task_id, stage=TaskStage.SYNTHESIZING.value, progress=85,
@@ -427,9 +470,13 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
 
             _update_meta(task_id, stage=TaskStage.MIXING.value, progress=95,
                          message="合成全片视频中")
-            log_cb("视频合并", "启动 FFmpeg 全片画面、配音音轨与字幕轨高精度合并...")
-            await mixer.merge(task_dir, video_path, segments, original_volume=orig_vol)
-            log_cb("视频合并", "高清成片渲染完毕，输出 final.mp4 导出准备就绪", "success")
+            final_src = task_dir / "final.mp4"
+            if final_src.exists() and final_src.stat().st_size > 1000:
+                log_cb("视频合并", "⚡ 发现已有完整成片 final.mp4 缓存，秒级导出就绪", "success")
+            else:
+                log_cb("视频合并", "启动 FFmpeg 全片画面、配音音轨与字幕轨高精度合并...")
+                await mixer.merge(task_dir, video_path, segments, original_volume=orig_vol)
+                log_cb("视频合并", "高清成片渲染完毕，输出 final.mp4 导出准备就绪", "success")
 
         _update_meta(task_id, stage=TaskStage.COMPLETE.value, progress=100,
                      message="完成", error=None)
