@@ -84,3 +84,26 @@ def test_build_ai_request_args_anthropic() -> None:
         ]
     }
     assert extract_fn(mock_resp) == '["你好"]'
+
+
+def test_adaptive_rate_limiter() -> None:
+    import asyncio
+    from server.services.translate import AdaptiveRateLimiter
+
+    limiter = AdaptiveRateLimiter()
+    assert limiter.current_delay == 0.0
+
+    # 遇到 429 限流，乘性加大间隔
+    asyncio.run(limiter.on_rate_limit())
+    assert limiter.current_delay == 1.5
+
+    # 再次 429，继续增大
+    asyncio.run(limiter.on_rate_limit())
+    assert limiter.current_delay > 3.0
+
+    # 连续 5 次成功后，加性缩减间隔
+    d_before = limiter.current_delay
+    for _ in range(5):
+        asyncio.run(limiter.on_success())
+    assert limiter.current_delay < d_before
+

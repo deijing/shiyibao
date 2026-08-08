@@ -27,6 +27,64 @@ LANG_NAMES = {
 }
 
 
+class AdaptiveRateLimiter:
+    """AIMD (加性增加 / 乘性减少) 动态速率调节器。
+
+    机制：
+    1. 初始 0s 延迟全速冲刺（无限制厂商享受极速响应）。
+    2. 遇到 429 限流：乘性增大平滑等待间隔（如 1.5s -> 3.2s -> 6.0s），消除频发限流。
+    3. 连续成功后（每 5 次成功）：加性缩减等待间隔（-0.3s），逐步探顶恢复最佳吞吐量。
+    """
+
+    def __init__(self, min_delay: float = 0.0, max_delay: float = 10.0) -> None:
+        self.min_delay = min_delay
+        self.max_delay = max_delay
+        self.current_delay = 0.0
+        self.consecutive_successes = 0
+        self._lock = asyncio.Lock()
+
+    async def acquire_pacing(self) -> float:
+        """根据当前自适应延迟进行请求前平滑等待。"""
+        async with self._lock:
+            delay = self.current_delay
+
+        if delay > 0.0:
+            jitter = random.uniform(0.1, 0.4) if delay > 0.5 else random.uniform(0.05, 0.2)
+            total_sleep = delay + jitter
+            await asyncio.sleep(total_sleep)
+            return total_sleep
+        return 0.0
+
+    async def on_rate_limit(self, log_cb: Callable[..., None] | None = None) -> float:
+        """当触发 429 速率限制时调用：乘性增大等待间隔。"""
+        async with self._lock:
+            self.consecutive_successes = 0
+            old_delay = self.current_delay
+            if self.current_delay <= 0.0:
+                self.current_delay = 1.5
+            else:
+                self.current_delay = min(self.max_delay, self.current_delay * 1.8 + 0.5)
+            new_delay = self.current_delay
+
+        logger.info("动态流控：检测到 429 限流，请求间隔从 %.2fs 自动调大至 %.2fs", old_delay, new_delay)
+        if log_cb:
+            log_cb("速率自适应", f"⚡ 触发 API 速率限制 (429)，已自动降低请求频率（等待间隔调整至 {new_delay:.1f}s）", "api")
+        return new_delay
+
+    async def on_success(self, log_cb: Callable[..., None] | None = None) -> float:
+        """当请求成功时调用：连续成功后加性缩减等待间隔。"""
+        async with self._lock:
+            self.consecutive_successes += 1
+            old_delay = self.current_delay
+            if self.consecutive_successes >= 5 and self.current_delay > self.min_delay:
+                self.current_delay = max(self.min_delay, self.current_delay - 0.3)
+                self.consecutive_successes = 0
+                new_delay = self.current_delay
+                if old_delay > 0.0 and log_cb and new_delay < old_delay:
+                    log_cb("速率自适应", f"📈 接口调用持续稳定，自动恢复提升请求速率（等待间隔缩减至 {new_delay:.1f}s）", "info")
+            return self.current_delay
+
+
 def _extract_json_array(text: str) -> list:
     """从模型响应中解析 JSON 数组，并兼容代码围栏。"""
     s = text.strip()
@@ -263,6 +321,8 @@ async def translate_subtitles(
 
     performance = get_performance_settings()
     batch_size = performance.translate_batch_size
+    adaptive_limiter = AdaptiveRateLimiter()
+
     pending = [
         seg for seg in segments
         if not (skip_translated and str(seg.get("translated_text", "")).strip())
@@ -284,9 +344,8 @@ async def translate_subtitles(
 
             translations: list = []
             async with translate_limiter.slot():
-                # 首波并发槽位正常发出，后续批次间加入 0.8s ~ 1.4s 动态微间隔，平滑并发以防 429 频发
-                if batch_idx >= performance.translate_concurrency:
-                    await asyncio.sleep(0.8 + random.uniform(0.1, 0.6))
+                # 动态自适应平滑：初始 0s 冲刺，遇 429 乘性调大间隔，稳定后探顶恢复
+                await adaptive_limiter.acquire_pacing()
 
                 for attempt in range(MAX_RETRIES):
                     # 多 Key 轮询：若提供了逗号分隔的多个 Key，触发重试时切到下一个 Key
@@ -308,8 +367,13 @@ async def translate_subtitles(
                         data = resp.json()
                         raw = extract_text(data)
                         translations = _extract_json_array(raw)
+                        await adaptive_limiter.on_success(log_cb=log_cb)
                         break
                     except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError) as exc:
+                        is_429 = isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429
+                        if is_429:
+                            await adaptive_limiter.on_rate_limit(log_cb=log_cb)
+
                         if attempt == MAX_RETRIES - 1:
                             logger.error("AI 翻译 API 调用失败 (已重试 %d 次): %s", MAX_RETRIES, exc)
                             if log_cb:
