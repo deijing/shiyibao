@@ -69,6 +69,7 @@ APP_DATA_DIR = _default_app_data_dir()
 WORKSPACE_DIR = APP_DATA_DIR / "workspace"
 UPLOADS_DIR = WORKSPACE_DIR / "uploads"
 TASKS_DIR = WORKSPACE_DIR / "tasks"
+PROJECTS_DIR = WORKSPACE_DIR / "projects"
 VOICE_PREVIEWS_DIR = WORKSPACE_DIR / "voice_previews"
 USER_SETTINGS_PATH = WORKSPACE_DIR / "user_settings.json"
 
@@ -87,7 +88,7 @@ TTS_CONCURRENCY = _env_int("TTS_CONCURRENCY", 6, 1, 16)
 SUBTITLE_FONT = os.getenv("SUBTITLE_FONT", "Arial")
 
 # 确保目录存在
-for d in [UPLOADS_DIR, TASKS_DIR, VOICE_PREVIEWS_DIR]:
+for d in [UPLOADS_DIR, TASKS_DIR, PROJECTS_DIR, VOICE_PREVIEWS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 

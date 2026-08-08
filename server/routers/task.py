@@ -5,6 +5,7 @@ import json
 import logging
 import shutil
 from pathlib import Path
+import re
 import uuid
 
 from filelock import FileLock
@@ -13,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 
 from .. import security
-from ..config import MIMO_API_KEY, TASKS_DIR, UPLOADS_DIR
+from ..config import MIMO_API_KEY, PROJECTS_DIR, TASKS_DIR, UPLOADS_DIR
 from ..models import (
     RegisterLocalRequest,
     ScanDirectoryRequest,
@@ -173,6 +174,47 @@ def _find_video(task_id: str) -> Path:
     return video_path
 
 
+def _sanitize_folder_name(name: str) -> str:
+    """清理文件名中的非法字符，生成安全的工程文件夹名称。"""
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n\t]', "_", str(name or "")).strip()
+    return cleaned[:64] if cleaned else "未命名工程"
+
+
+def _sync_project_folder_alias(task_id: str, title: str | None = None) -> tuple[str, str]:
+    """为任务关联友好命名的工程文件夹（并在 PROJECTS_DIR 下创建直观的符号链接快捷目录）。"""
+    try:
+        task_dir = _task_dir(task_id)
+        if not task_dir.exists():
+            return "", ""
+    except Exception:
+        return "", ""
+
+    meta = _read_meta(task_id)
+    effective_title = (title or meta.get("video_title") or "").strip()
+    original_fn = (meta.get("filename") or "").strip()
+
+    if effective_title:
+        safe_name = f"【{_sanitize_folder_name(effective_title)}】_{task_id[:8]}"
+    elif original_fn:
+        safe_name = f"{_sanitize_folder_name(Path(original_fn).stem)}_{task_id[:8]}"
+    else:
+        safe_name = f"工程_{task_id[:8]}"
+
+    proj_dir_path = str(task_dir.resolve())
+    _update_meta(task_id, project_folder_name=safe_name, project_dir=proj_dir_path)
+
+    try:
+        alias_link = PROJECTS_DIR / safe_name
+        if alias_link.is_symlink() or alias_link.exists():
+            with suppress(Exception):
+                alias_link.unlink()
+        alias_link.symlink_to(task_dir.resolve(), target_is_directory=True)
+    except Exception as exc:
+        logger.debug("创建工程符号链接失败 (非关键错误): %s", exc)
+
+    return safe_name, proj_dir_path
+
+
 def _status(meta: dict) -> TaskStatusResponse:
     video_title = meta.get("video_title")
     task_id = meta.get("task_id")
@@ -195,6 +237,11 @@ def _status(meta: dict) -> TaskStatusResponse:
             except Exception:
                 pass
 
+    proj_folder_name = meta.get("project_folder_name")
+    proj_dir = meta.get("project_dir") or (str(_task_dir(task_id).resolve()) if task_id else "")
+    if not proj_folder_name and task_id:
+        proj_folder_name, proj_dir = _sync_project_folder_alias(task_id, video_title)
+
     return TaskStatusResponse(
         task_id=meta["task_id"],
         stage=meta.get("stage", TaskStage.PENDING.value),
@@ -215,6 +262,8 @@ def _status(meta: dict) -> TaskStatusResponse:
         chunks=meta.get("chunks", []),
         rendered_seconds=meta.get("rendered_seconds", 0.0),
         video_title=video_title,
+        project_folder_name=proj_folder_name,
+        project_dir=proj_dir,
     )
 
 
@@ -369,7 +418,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                              f"这些分段将保留原文并按原文配音，建议稍后重试整片转译。", "error")
         log_cb("AI 翻译", f"[{api_format}] 深度上下文润色与全片字幕翻译完成", "success")
 
-        # 智能总结视频标题
+        # 智能总结视频标题并同步生成标语命名工程目录
         try:
             video_title = await translate.summarize_video_title(
                 segments,
@@ -380,9 +429,13 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             )
             if video_title:
                 _update_meta(task_id, video_title=video_title)
-                log_cb("AI 翻译", f"智能生成视频标题: \"{video_title}\"", "info")
+                safe_folder_name, _ = _sync_project_folder_alias(task_id, video_title)
+                log_cb("AI 翻译", f"✨ 智能生成视频标题: \"{video_title}\"，工程目录已关联为: {safe_folder_name}", "info")
+            else:
+                _sync_project_folder_alias(task_id)
         except Exception as e:
             logger.warning("生成视频标题失败: %s", e)
+            _sync_project_folder_alias(task_id)
 
         if req.stream_mode != "batch" and len(segments) > 0:
             # 4. 流式分片增量渲染阶段（断点续传检查）
@@ -893,4 +946,36 @@ async def scan_directory(req: ScanDirectoryRequest, request: Request) -> ScanDir
         count=len(video_files),
         message=f"已扫描到 {len(video_files)} 个视频文件",
     )
+
+
+@router.post("/task/{task_id}/open_folder")
+async def open_task_folder(task_id: str, request: Request) -> dict:
+    """一键在系统文件管理器（macOS Finder / Windows File Explorer）中弹出并打开该任务的工程文件夹。"""
+    _guard_local_fs(request)
+    task_dir = _task_dir(task_id)
+    if not task_dir.exists():
+        raise HTTPException(status_code=404, detail="工程文件夹不存在")
+
+    meta = _read_meta(task_id)
+    folder_name = meta.get("project_folder_name") or task_dir.name
+
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["open", str(task_dir)], check=True)
+        elif sys.platform == "win32":
+            subprocess.run(["explorer", str(task_dir)], check=True)
+        else:
+            subprocess.run(["xdg-open", str(task_dir)], check=True)
+        return {
+            "success": True,
+            "message": f"已在文件管理器中打开工程文件夹: {folder_name}",
+            "path": str(task_dir.resolve()),
+            "folder_name": folder_name,
+        }
+    except Exception as exc:
+        logger.error("打开工程文件夹失败: %s", exc)
+        raise HTTPException(status_code=500, detail=f"打开工程文件夹失败: {exc}") from exc
 
