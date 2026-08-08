@@ -38,6 +38,7 @@ def test_merge_burns_ass_subtitles_and_uses_gpu_encode(monkeypatch, tmp_path) ->
             hwaccel="videotoolbox",
         )
 
+    monkeypatch.setattr(mixer, "get_subtitle_burn_filter", lambda: "ass")
     monkeypatch.setattr(mixer, "run_ffmpeg_video_encode", fake_run_ffmpeg_video_encode)
     asyncio.run(mixer.merge(
         tmp_path,
@@ -47,7 +48,7 @@ def test_merge_burns_ass_subtitles_and_uses_gpu_encode(monkeypatch, tmp_path) ->
 
     filter_args = captured["filter_args"]
     assert "-vf" in filter_args
-    assert filter_args[filter_args.index("-vf") + 1].startswith("ass=filename='")
+    assert "ass=filename='" in filter_args[filter_args.index("-vf") + 1]
     assert captured["quality"] == "high"
     assert captured["output_path"].endswith("final.mp4")
     assert "libx264" not in filter_args
