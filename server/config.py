@@ -54,15 +54,27 @@ def _default_app_data_dir() -> Path:
         return Path(override).expanduser().resolve()
 
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "视译宝"
-    if os.name == "nt":
+        new_dir = Path.home() / "Library" / "Application Support" / "yishibao"
+        old_dir = Path.home() / "Library" / "Application Support" / "视译宝"
+    elif os.name == "nt":
         roaming = os.getenv("APPDATA", "").strip()
         base = Path(roaming) if roaming else Path.home() / "AppData" / "Roaming"
-        return base / "视译宝"
+        new_dir = base / "yishibao"
+        old_dir = base / "视译宝"
+    else:
+        xdg_data_home = os.getenv("XDG_DATA_HOME", "").strip()
+        base = Path(xdg_data_home).expanduser() if xdg_data_home else Path.home() / ".local" / "share"
+        new_dir = base / "yishibao"
+        old_dir = base / "shiyibao"
 
-    xdg_data_home = os.getenv("XDG_DATA_HOME", "").strip()
-    base = Path(xdg_data_home).expanduser() if xdg_data_home else Path.home() / ".local" / "share"
-    return base / "shiyibao"
+    # 如果存在旧的中文目录“视译宝”且新英文目录“yishibao”尚不存在，自动迁移平滑过渡
+    if old_dir.exists() and not new_dir.exists():
+        try:
+            old_dir.rename(new_dir)
+        except Exception:
+            return old_dir
+
+    return new_dir
 
 
 APP_DATA_DIR = _default_app_data_dir()
