@@ -98,3 +98,34 @@ def test_mix_filter_complex_original_volume() -> None:
     assert "amix=" not in filter_muted
     assert "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur=10.000,atrim=0:10.000,asetpts=PTS-STARTPTS[a]" == filter_muted
 
+
+def test_write_srt_subtitles(tmp_path) -> None:
+    path = mixer.write_srt_subtitles(
+        tmp_path,
+        [{
+            "start": 1.25,
+            "end": 3.5,
+            "translated_text": "测试字幕",
+        }],
+    )
+    content = path.read_text(encoding="utf-8")
+    assert "1" in content
+    assert "00:00:01,250 --> 00:00:03,500" in content
+    assert "测试字幕" in content
+
+
+def test_build_vf_filter_args_fallback(monkeypatch, tmp_path) -> None:
+    sub_path = tmp_path / "test.ass"
+
+    monkeypatch.setattr(mixer, "get_subtitle_burn_filter", lambda: "ass")
+    assert mixer._build_vf_filter_args(sub_path)[0] == "-vf"
+    assert "ass=filename=" in mixer._build_vf_filter_args(sub_path)[1]
+
+    monkeypatch.setattr(mixer, "get_subtitle_burn_filter", lambda: "subtitles")
+    assert mixer._build_vf_filter_args(sub_path)[0] == "-vf"
+    assert "subtitles=filename=" in mixer._build_vf_filter_args(sub_path)[1]
+
+    monkeypatch.setattr(mixer, "get_subtitle_burn_filter", lambda: None)
+    assert mixer._build_vf_filter_args(sub_path) == []
+
+

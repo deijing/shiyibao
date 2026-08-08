@@ -32,10 +32,11 @@
 
 ### 1. 安装 FFmpeg
 
-macOS（Homebrew）：
+macOS（Homebrew，推荐使用包含 libass 的库）：
 
 ```bash
-brew install ffmpeg
+brew tap homebrew-ffmpeg/ffmpeg
+brew install homebrew-ffmpeg/ffmpeg/ffmpeg
 ```
 
 Windows（WinGet）：

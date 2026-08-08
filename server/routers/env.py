@@ -45,14 +45,39 @@ async def check_environment() -> Dict[str, Any]:
         except Exception:
             pass
 
-        checks.append({
-            "id": "ffmpeg",
-            "category": "core",
-            "name": "FFmpeg / FFprobe 音视频编解码引擎",
-            "status": "pass",
-            "detail": f"{version_str} (路径: {ffmpeg_path})",
-            "recommendation": None,
-        })
+        # 检查是否支持 ASS 字幕滤镜 (libass)
+        has_ass = False
+        try:
+            res_filters = await asyncio.to_thread(
+                subprocess.run, [ffmpeg_path, "-filters"], capture_output=True, text=True, timeout=5
+            )
+            if res_filters.returncode == 0:
+                has_ass = " ass " in res_filters.stdout or "\n.. ass " in res_filters.stdout or "\n... ass " in res_filters.stdout
+        except Exception:
+            pass
+
+        if has_ass:
+            checks.append({
+                "id": "ffmpeg",
+                "category": "core",
+                "name": "FFmpeg / FFprobe 音视频编解码引擎",
+                "status": "pass",
+                "detail": f"{version_str} (路径: {ffmpeg_path})",
+                "recommendation": None,
+            })
+        else:
+            rec_ass = {
+                "Darwin": "当前 FFmpeg 缺失 libass (ass 字幕烧录滤镜)。请在终端运行：brew tap homebrew-ffmpeg/ffmpeg && brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full",
+                "Windows": "当前 FFmpeg 缺失 libass 滤镜。请使用包含 libass 的 Gyan.FFmpeg 构建（winget install Gyan.FFmpeg）。",
+            }.get(system_name, "请安装带 --enable-libass 支持的 FFmpeg 版本。")
+            checks.append({
+                "id": "ffmpeg",
+                "category": "core",
+                "name": "FFmpeg / FFprobe 音视频编解码引擎",
+                "status": "fail",
+                "detail": f"{version_str} (路径: {ffmpeg_path}) - ❌ 缺失 libass/ass 字幕烧录滤镜",
+                "recommendation": rec_ass,
+            })
 
         # 1b. GPU / 硬件编码能力
         try:

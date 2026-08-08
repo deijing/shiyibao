@@ -340,6 +340,12 @@ async def run_ffmpeg_video_encode(
                 _preferred_encoder = None
 
     detail = " | ".join(errors[-4:]) if errors else "no encoder tried"
+    if "No such filter: 'ass'" in detail or "filter: 'ass'" in detail or "Filter not found" in detail:
+        raise RuntimeError(
+            "FFmpeg 缺失 libass (ass 字幕烧录滤镜)，无法将字幕压制到视频中。\n"
+            "在 macOS 上请在终端中运行以下命令安装包含 libass 的完整版 FFmpeg：\n"
+            "  brew tap homebrew-ffmpeg/ffmpeg && brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full"
+        )
     raise RuntimeError(f"视频编码失败（硬件与软编均不可用）: {detail}")
 
 

@@ -44,8 +44,24 @@ def check_requirements() -> str:
     supported_node = (major == 20 and minor >= 19) or (major == 22 and minor >= 12) or major > 22
     if not supported_node:
         fail(f"Node.js {version_text} 版本过低；需要 20.19+ 或 22.12+。")
-    if shutil.which("ffmpeg") is None:
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if ffmpeg_bin is None:
         fail("未找到 FFmpeg。请安装带 libass 支持的 FFmpeg，并将其加入 PATH。")
+    try:
+        filters_out = subprocess.check_output(
+            [ffmpeg_bin, "-filters"], text=True, timeout=5, stderr=subprocess.STDOUT
+        )
+        if " ass " not in filters_out and " subtitles " not in filters_out:
+            print("\n⚠️  警告：检测到当前 FFmpeg 缺少 libass 字幕烧录滤镜。")
+            if sys.platform == "darwin":
+                print("   在 macOS 上推荐运行：brew tap homebrew-ffmpeg/ffmpeg && brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full")
+            elif os.name == "nt":
+                print("   在 Windows 上推荐运行：winget install Gyan.FFmpeg")
+            else:
+                print("   在 Linux 上请安装带 --enable-libass 的 ffmpeg 软件包。")
+    except Exception:
+        pass
+
     if not (APP_DIR / "node_modules").exists():
         fail("前端依赖未安装。请先在 app 目录运行：npm ci")
     return npm

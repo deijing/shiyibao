@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-from .audio import has_audio_stream, probe_duration, run_ffmpeg
+from .audio import get_subtitle_burn_filter, has_audio_stream, probe_duration, run_ffmpeg
 from .hwaccel import run_ffmpeg_video_encode
 from ..config import SUBTITLE_FONT
 
@@ -17,6 +17,14 @@ def _ass_timestamp(seconds: float) -> str:
     minutes, remainder = divmod(remainder, 6_000)
     secs, centiseconds = divmod(remainder, 100)
     return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
+
+
+def _srt_timestamp(seconds: float) -> str:
+    total_ms = max(0, round(float(seconds) * 1000))
+    hours, remainder = divmod(total_ms, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    secs, ms = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
 
 
 def _single_line_text(value: object) -> str:
@@ -37,8 +45,25 @@ def _subtitle_font_size(text: str) -> int:
     return max(ASS_MIN_FONT_SIZE, fitted)
 
 
+def write_srt_subtitles(task_dir: Path, segments: list[dict], out_name: str = "subtitles_zh.srt") -> Path:
+    """创建通用 SRT 格式字幕文件。"""
+    out_path = task_dir / out_name
+    lines: list[str] = []
+    idx = 1
+    for seg in segments:
+        text = (seg.get("translated_text") or seg.get("source_text") or "").strip()
+        if not text:
+            continue
+        start = float(seg.get("start", 0.0))
+        end = max(start + 0.05, float(seg.get("end", start + 0.05)))
+        lines.extend([str(idx), f"{_srt_timestamp(start)} --> {_srt_timestamp(end)}", text, ""])
+        idx += 1
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    return out_path
+
+
 def write_ass_subtitles(task_dir: Path, segments: list[dict], out_name: str = "subtitles_zh.ass") -> Path:
-    """创建底部对齐的单行中文 ASS 字幕文件。"""
+    """创建底部对齐的单行中文 ASS 字幕文件（同时导出配套 SRT）。"""
     out_path = task_dir / out_name
     header = """[Script Info]
 ScriptType: v4.00+
@@ -70,6 +95,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f"{{\\q2\\fs{font_size}}}{text}"
         )
     out_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+
+    # 导出同名 srt 供独立字幕下载/降级播放
+    srt_name = Path(out_name).with_suffix(".srt").name
+    write_srt_subtitles(task_dir, segments, out_name=srt_name)
     return out_path
 
 
@@ -85,6 +114,17 @@ def _escape_concat_path(path: Path) -> str:
     """为 concat demuxer 生成安全路径（正斜杠 + 单引号转义）。"""
     value = path.resolve().as_posix().replace("'", r"'\''")
     return value
+
+
+def _build_vf_filter_args(subtitle_path: Path) -> list[str]:
+    """根据 FFmpeg 能力选择最合适的字幕压制滤镜；无 libass 时降级为不嵌入。"""
+    burn_filter = get_subtitle_burn_filter()
+    escaped_path = _escape_filter_path(subtitle_path)
+    if burn_filter == "ass":
+        return ["-vf", f"ass=filename='{escaped_path}'"]
+    if burn_filter == "subtitles":
+        return ["-vf", f"subtitles=filename='{escaped_path}'"]
+    return []
 
 
 def _mix_filter_complex(
@@ -160,6 +200,8 @@ async def merge(
         original_volume=original_volume,
     )
 
+    vf_args = _build_vf_filter_args(subtitle_path)
+
     # 字幕压制需要重新编码视频；优先 GPU，保持 yuv420p 兼容浏览器与常见播放器。
     await run_ffmpeg_video_encode(
         input_args=[
@@ -169,7 +211,7 @@ async def merge(
         filter_args=[
             "-filter_complex", filter_complex,
             "-map", "0:v", "-map", "[a]",
-            "-vf", f"ass=filename='{_escape_filter_path(subtitle_path)}'",
+            *vf_args,
         ],
         audio_args=["-c:a", "aac"],
         output_path=str(out_path),
@@ -207,6 +249,8 @@ async def merge_chunk(
         original_volume=original_volume,
     )
 
+    vf_args = _build_vf_filter_args(subtitle_path)
+
     # 不用 -shortest：由 -t + apad/atrim 保证输出时长等于时间窗。
     await run_ffmpeg_video_encode(
         input_args=[
@@ -217,7 +261,7 @@ async def merge_chunk(
         filter_args=[
             "-filter_complex", filter_complex,
             "-map", "0:v", "-map", "[a]",
-            "-vf", f"ass=filename='{_escape_filter_path(subtitle_path)}'",
+            *vf_args,
         ],
         audio_args=["-c:a", "aac", "-ar", "44100"],
         output_path=str(out_path),

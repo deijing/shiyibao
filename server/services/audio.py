@@ -72,6 +72,27 @@ def find_media_binary(name: str) -> str | None:
     return None
 
 
+def get_subtitle_burn_filter() -> str | None:
+    """探测 FFmpeg 中可用的字幕硬烧录滤镜 ('ass'、'subtitles' 或 None)。"""
+    executable = find_media_binary("ffmpeg")
+    if not executable:
+        return None
+    try:
+        import subprocess
+        res = subprocess.run(
+            [executable, "-filters"], capture_output=True, text=True, timeout=5
+        )
+        if res.returncode == 0:
+            stdout = res.stdout
+            if " ass " in stdout or "\n.. ass " in stdout or "\n... ass " in stdout:
+                return "ass"
+            if " subtitles " in stdout or "\n.. subtitles " in stdout:
+                return "subtitles"
+    except Exception:
+        pass
+    return None
+
+
 async def run_ffmpeg(args: list[str]) -> None:
     """使用给定参数运行 ffmpeg；非零退出时抛出 RuntimeError。"""
     executable = find_media_binary("ffmpeg")
