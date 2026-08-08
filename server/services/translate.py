@@ -10,7 +10,9 @@ from ..performance import get_performance_settings, translate_limiter
 
 logger = logging.getLogger(__name__)
 
-MAX_RETRIES = 3
+import random
+
+MAX_RETRIES = 5
 RETRY_BACKOFF_BASE = 2.0
 
 LANG_NAMES = {
@@ -276,23 +278,28 @@ async def translate_subtitles(
             max_keepalive_connections=performance.translate_concurrency,
         ),
     ) as client:
-        async def translate_batch(batch_start: int, batch: list[dict]) -> tuple[int, list[dict], list]:
+        async def translate_batch(batch_idx: int, batch_start: int, batch: list[dict]) -> tuple[int, list[dict], list]:
             source_texts = [seg["source_text"] for seg in batch]
             user_prompt = json.dumps(source_texts, ensure_ascii=False)
 
-            current_key = pick_api_key(gemini_api_key, batch_start)
-            url, headers, body, extract_text = build_ai_request_args(
-                gemini_api_format,
-                gemini_api_url,
-                gemini_model,
-                current_key,
-                system_prompt,
-                user_prompt,
-            )
-
             translations: list = []
             async with translate_limiter.slot():
+                # 首波并发槽位正常发出，后续批次间加入 0.8s ~ 1.4s 动态微间隔，平滑并发以防 429 频发
+                if batch_idx >= performance.translate_concurrency:
+                    await asyncio.sleep(0.8 + random.uniform(0.1, 0.6))
+
                 for attempt in range(MAX_RETRIES):
+                    # 多 Key 轮询：若提供了逗号分隔的多个 Key，触发重试时切到下一个 Key
+                    current_key = pick_api_key(gemini_api_key, batch_start + attempt)
+                    url, headers, body, extract_text = build_ai_request_args(
+                        gemini_api_format,
+                        gemini_api_url,
+                        gemini_model,
+                        current_key,
+                        system_prompt,
+                        user_prompt,
+                    )
+
                     try:
                         resp = await client.post(url, headers=headers, json=body)
                         if resp.status_code == 429 or resp.status_code >= 500:
@@ -306,12 +313,33 @@ async def translate_subtitles(
                         if attempt == MAX_RETRIES - 1:
                             logger.error("AI 翻译 API 调用失败 (已重试 %d 次): %s", MAX_RETRIES, exc)
                             if log_cb:
-                                log_cb("AI 翻译", f"AI 接口响应异常: {exc}", "error")
+                                log_cb("AI 翻译", f"AI 接口响应异常 (已重试 {MAX_RETRIES} 次): {exc}", "error")
                             break
-                        wait = RETRY_BACKOFF_BASE ** (attempt + 1)
+
+                        # 针对 429 Rate Limit 特殊加大退避秒数并解析 Retry-After 标头
+                        is_429 = isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429
+                        retry_after = None
+                        if is_429 and exc.response:
+                            ra_hdr = exc.response.headers.get("Retry-After") or exc.response.headers.get("retry-after")
+                            if ra_hdr:
+                                try:
+                                    retry_after = float(ra_hdr)
+                                except ValueError:
+                                    pass
+
+                        if retry_after is not None and retry_after > 0:
+                            wait = max(retry_after, 3.0) + random.uniform(0.5, 1.5)
+                        elif is_429:
+                            # 429 速率限制递增退避：4s, 8s, 16s, 24s, 32s + 随机抖动，彻底覆盖 RPM/TPM 刷新周期
+                            wait = min(4.0 * (2 ** attempt), 32.0) + random.uniform(0.5, 2.0)
+                        else:
+                            # 普通网络波动 / 5xx 服务端错误退避
+                            wait = (RETRY_BACKOFF_BASE ** (attempt + 1)) + random.uniform(0.2, 1.0)
+
                         logger.warning("AI 翻译 API 第 %d 次重试，等待 %.1fs: %s", attempt + 1, wait, exc)
                         if log_cb:
-                            log_cb("AI 翻译", f"触发速率限制/网络波动，第 {attempt + 1} 次重试中 (等待 {wait:.1f}s)...", "api")
+                            reason = "触发 API 速率限制 (429)" if is_429 else "网络波动/服务端响应异常"
+                            log_cb("AI 翻译", f"{reason}，第 {attempt + 1}/{MAX_RETRIES-1} 次重试中 (等待 {wait:.1f}s)...", "api")
                         await asyncio.sleep(wait)
                     except (KeyError, IndexError, json.JSONDecodeError) as exc:
                         logger.error("AI 响应结构异常，本批未翻译: %s", exc)
@@ -322,8 +350,8 @@ async def translate_subtitles(
             return batch_start, batch, translations
 
         results = await asyncio.gather(*(
-            translate_batch(batch_start, batch)
-            for batch_start, batch in batches
+            translate_batch(i, batch_start, batch)
+            for i, (batch_start, batch) in enumerate(batches)
         ))
 
         fallback_count = 0
