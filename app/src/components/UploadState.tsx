@@ -11,7 +11,6 @@ import {
   SOURCE_LANGUAGES,
   TARGET_LANGUAGES,
   VOICES,
-  DEFAULT_GEMINI_MODELS,
   type AppSettings,
 } from './SettingsPanel'
 import {
