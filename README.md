@@ -8,6 +8,7 @@
 
 ### 全自动化 AI 视频跨语言转译、多模型智能翻译与原声音色克隆重构工作台
 
+[![Official Website](https://img.shields.io/badge/Official_Website-shiyibao--web.vercel.app-7c3aed?logo=vercel&logoColor=white&style=for-the-badge)](https://shiyibao-web.vercel.app/)
 [![GitHub Repository](https://img.shields.io/badge/GitHub-deijing%2Fshiyibao-blue?logo=github&style=for-the-badge)](https://github.com/deijing/shiyibao)
 [![Version](https://img.shields.io/badge/Version-v0.1.7-8b5cf6?style=for-the-badge)](https://github.com/deijing/shiyibao/releases)
 [![License](https://img.shields.io/badge/License-MIT-emerald?style=for-the-badge)](LICENSE)
@@ -16,7 +17,7 @@
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=black&style=for-the-badge)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white&style=for-the-badge)](https://fastapi.tiangolo.com)
 
-[📖 快速开始](#-快速开始) • [✨ 核心特性](#-核心特性) • [🧠 适配 AI 大模型](#-适配-ai-at-大模型) • [🌐 多语言翻译](#-多语言全语种互译) • [🏗️ 系统架构](#-系统架构) • [⚙️ 配置说明](#%EF%B8%8F-配置说明)
+[🌐 **官方网站**](https://shiyibao-web.vercel.app/) • [📖 快速开始](#-快速开始) • [✨ 核心特性](#-核心特性) • [🧠 适配 AI 大模型](#-适配-ai-at-大模型) • [🌐 多语言翻译](#-多语言全语种互译) • [🏗️ 系统架构](#-系统架构) • [⚙️ 配置说明](#%EF%B8%8F-配置说明)
 
 </div>
 

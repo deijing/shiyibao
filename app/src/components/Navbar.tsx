@@ -1,4 +1,4 @@
-import { Bell, CheckCircle2, Clock3, Sun, Moon, Loader2, ChevronRight, ShieldCheck, Menu } from 'lucide-react'
+import { Bell, CheckCircle2, Clock3, Sun, Moon, Loader2, ChevronRight, ShieldCheck, Menu, Globe } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { GithubIcon } from './GithubIcon'
 import { ChangelogModal } from './ChangelogModal'
@@ -170,6 +170,16 @@ export default function Navbar({
               <Moon className="w-4 h-4 text-muted-foreground" />
             )}
           </Button>
+          <a
+            href="https://shiyibao-web.vercel.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-9 items-center gap-1.5 px-3 rounded-full bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800/80 text-xs font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/80 transition-all cursor-pointer shadow-2xs"
+            title="视译宝官方网站 (shiyibao-web.vercel.app)"
+          >
+            <Globe className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+            <span className="hidden sm:inline">官网</span>
+          </a>
           <a
             href="https://github.com/deijing/shiyibao"
             target="_blank"
