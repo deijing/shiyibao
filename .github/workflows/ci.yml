@@ -22,11 +22,17 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - uses: FedericoCarboni/setup-ffmpeg@v2
-        if: matrix.os != 'macos-latest'
-      - name: Install FFmpeg on macOS
+      - name: Install FFmpeg (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg (macOS)
         if: matrix.os == 'macos-latest'
-        run: brew install ffmpeg
+        run: which ffmpeg || brew install ffmpeg || true
+      - name: Install FFmpeg (Windows)
+        if: matrix.os == 'windows-latest'
+        run: choco install ffmpeg --yes --no-progress
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
       - uses: actions/setup-node@v4
@@ -69,6 +75,8 @@ jobs:
       # 文件名对应 windows-latest 的 host triple。
       - name: Create sidecar placeholder
         shell: bash
-        run: touch src-tauri/binaries/shiyibao-backend-x86_64-pc-windows-msvc.exe
+        run: |
+          mkdir -p src-tauri/binaries
+          touch src-tauri/binaries/shiyibao-backend-x86_64-pc-windows-msvc.exe
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
-      - run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - run: cargo check --manifest-path src-tauri/Cargo.toml

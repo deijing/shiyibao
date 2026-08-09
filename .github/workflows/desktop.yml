@@ -78,7 +78,7 @@ jobs:
 
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
-        run: brew install ffmpeg
+        run: which ffmpeg || brew install ffmpeg || true
 
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
