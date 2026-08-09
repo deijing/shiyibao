@@ -4,6 +4,7 @@ from collections.abc import Callable
 import hashlib
 import logging
 import re
+import shutil
 import wave
 from pathlib import Path
 
@@ -147,30 +148,40 @@ def _build_tts_utterances(segments: list[dict]) -> list[dict]:
     return utterances
 
 
-async def _assemble_track(
+# 单条 ffmpeg 命令允许的最大音频输入数。片段更多时分批混音再汇总，
+# 避免超长命令行与巨大 filtergraph 带来的高内存/失败风险（长视频批处理模式）。
+MAX_MIX_INPUTS = 48
+
+
+def _tail_filter(in_label: str, track_duration: float | None) -> str:
+    """把混音结果补齐/裁剪到时间窗长度（供流式分片对齐）；无需补齐时直接输出。"""
+    if track_duration and track_duration > 0:
+        d = float(track_duration)
+        return (
+            f"{in_label}apad=whole_dur={d:.3f},"
+            f"atrim=0:{d:.3f},asetpts=PTS-STARTPTS[out]"
+        )
+    return f"{in_label}anull[out]"
+
+
+async def _mix_rendered_clips(
     rendered: list[tuple[float, float, Path]],
     out_path: Path,
     track_duration: float | None = None,
 ) -> None:
-    """将每段合成音频按原始开始时间铺设到单一音轨上。"""
-    silence_seconds = max(0.1, float(track_duration)) if track_duration else 1.0
-    if not rendered:
-        await run_ffmpeg([
-            "-f", "lavfi", "-t", f"{silence_seconds:.3f}",
-            "-i", f"anullsrc=channel_layout=mono:sample_rate={WORK_RATE}",
-            "-acodec", "pcm_s16le", str(out_path), "-y",
-        ])
-        return
-
+    """把若干 (start, end, wav) 片段按各自绝对开始时间铺到一条 pcm 音轨（单次 ffmpeg）。"""
     args: list[str] = []
     for _, _, wav_path in rendered:
         args += ["-i", str(wav_path)]
 
-    filters = []
-    labels = []
-    for i, (start, end, wav_path) in enumerate(rendered):
-        duration = _get_wav_duration(wav_path)
+    # wave.open 是同步阻塞调用，放到线程里并发探测，避免卡住事件循环。
+    durations = await asyncio.gather(
+        *(asyncio.to_thread(_get_wav_duration, wav_path) for _, _, wav_path in rendered)
+    )
 
+    filters: list[str] = []
+    labels: list[str] = []
+    for i, ((start, end, _wav), duration) in enumerate(zip(rendered, durations)):
         # 每段配音属于各自的字幕区间。后续字幕的开始时间不得悄然延长当前片段的发声窗口。
         available = max(MIN_SEGMENT_SECONDS, end - start)
         tempo = duration / available if duration > available else 1.0
@@ -185,27 +196,79 @@ async def _assemble_track(
         ])
         filters.append(f"[{i}:a]{','.join(clip_filters)}[a{i}]")
         labels.append(f"[a{i}]")
+
     mix = "".join(labels) + f"amix=inputs={len(rendered)}:normalize=0:dropout_transition=0[mixed]"
-    if track_duration and track_duration > 0:
-        # 将整轨补齐到时间窗长度，供流式分片混音使用。
-        mix_filters = [
-            mix,
-            f"[mixed]apad=whole_dur={float(track_duration):.3f},"
-            f"atrim=0:{float(track_duration):.3f},asetpts=PTS-STARTPTS[out]",
-        ]
-        map_label = "[out]"
-    else:
-        mix_filters = [mix.replace("[mixed]", "[out]")]
-        map_label = "[out]"
-    filter_complex = ";".join(filters + mix_filters)
+    filter_complex = ";".join(filters + [mix, _tail_filter("[mixed]", track_duration)])
 
     args += [
         "-filter_complex", filter_complex,
-        "-map", map_label,
+        "-map", "[out]",
         "-acodec", "pcm_s16le",
         str(out_path), "-y",
     ]
     await run_ffmpeg(args)
+
+
+async def _overlay_track_files(
+    track_paths: list[Path],
+    out_path: Path,
+    track_duration: float | None = None,
+) -> None:
+    """把若干已各自铺到绝对时间轴的整段音轨叠加为最终音轨。"""
+    args: list[str] = []
+    for p in track_paths:
+        args += ["-i", str(p)]
+    filters = [f"[{i}:a]aresample={WORK_RATE}[t{i}]" for i in range(len(track_paths))]
+    labels = "".join(f"[t{i}]" for i in range(len(track_paths)))
+    mix = f"{labels}amix=inputs={len(track_paths)}:normalize=0:dropout_transition=0[mixed]"
+    filter_complex = ";".join(filters + [mix, _tail_filter("[mixed]", track_duration)])
+    args += [
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        "-acodec", "pcm_s16le",
+        str(out_path), "-y",
+    ]
+    await run_ffmpeg(args)
+
+
+async def _assemble_track(
+    rendered: list[tuple[float, float, Path]],
+    out_path: Path,
+    track_duration: float | None = None,
+) -> None:
+    """将每段合成音频按原始开始时间铺设到单一音轨上。
+
+    片段数超过 ``MAX_MIX_INPUTS`` 时改为「分批混音 → 汇总叠加」，把单条 ffmpeg 的输入数
+    控制在上限内，避免长视频批处理模式生成超长命令行/巨大 filtergraph。
+    """
+    silence_seconds = max(0.1, float(track_duration)) if track_duration else 1.0
+    if not rendered:
+        await run_ffmpeg([
+            "-f", "lavfi", "-t", f"{silence_seconds:.3f}",
+            "-i", f"anullsrc=channel_layout=mono:sample_rate={WORK_RATE}",
+            "-acodec", "pcm_s16le", str(out_path), "-y",
+        ])
+        return
+
+    if len(rendered) <= MAX_MIX_INPUTS:
+        await _mix_rendered_clips(rendered, out_path, track_duration=track_duration)
+        return
+
+    parts_dir = out_path.parent / f".mixparts_{out_path.stem}"
+    if parts_dir.exists():
+        shutil.rmtree(parts_dir, ignore_errors=True)
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        part_paths: list[Path] = []
+        for gi, gstart in enumerate(range(0, len(rendered), MAX_MIX_INPUTS)):
+            group = rendered[gstart:gstart + MAX_MIX_INPUTS]
+            part_path = parts_dir / f"part_{gi:03d}.wav"
+            # 分批产物不补齐时长，统一在最终叠加时对齐时间窗。
+            await _mix_rendered_clips(group, part_path, track_duration=None)
+            part_paths.append(part_path)
+        await _overlay_track_files(part_paths, out_path, track_duration=track_duration)
+    finally:
+        shutil.rmtree(parts_dir, ignore_errors=True)
 
 
 def _tts_cache_path(seg_dir: Path, seg_idx: int, voice: str, text: str) -> Path:
