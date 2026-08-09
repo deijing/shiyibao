@@ -1,8 +1,10 @@
-# <img src="app/public/logo.png" width="36" align="center" /> 视译宝 (ShiYiBao) v0.1.7
-
 <div align="center">
 
-<img src="app/public/logo.png" width="160" alt="ShiYiBao Logo" />
+<br />
+
+<img src="app/public/logo.png" width="280" alt="ShiYiBao Logo" />
+
+# 视译宝 (ShiYiBao) v0.1.7
 
 ### 全自动化 AI 视频跨语言转译、多模型智能翻译与原声音色克隆重构工作台
 
@@ -14,7 +16,7 @@
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=black&style=for-the-badge)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white&style=for-the-badge)](https://fastapi.tiangolo.com)
 
-[📖 快速开始](#-快速开始) • [✨ 核心特性](#-核心特性) • [🧠 适配 AI 大模型](#-适配-ai-大模型) • [🌐 多语言翻译](#-多语言全语种互译) • [🏗️ 系统架构](#-系统架构) • [⚙️ 配置说明](#%EF%B8%8F-配置说明)
+[📖 快速开始](#-快速开始) • [✨ 核心特性](#-核心特性) • [🧠 适配 AI 大模型](#-适配-ai-at-大模型) • [🌐 多语言翻译](#-多语言全语种互译) • [🏗️ 系统架构](#-系统架构) • [⚙️ 配置说明](#%EF%B8%8F-配置说明)
 
 </div>
 
