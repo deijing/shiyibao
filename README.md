@@ -30,7 +30,7 @@
 
 ## ⚡ AI Agent 一键部署 (Recommended)
 
-> **给用户的提示**：如果您使用的是 **Cursor、Claude Code、Windsurf、Bolt、Roo Code** 或任意 AI 编程 Agent，只需复制以下指令直接发给您的 AI Agent，它即可全自动为您拉取代码到本地、安装环境依赖并一键启动应用！
+> **给用户的提示**：如果您使用的是 **Cursor、Claude Code、Codex、Windsurf、Trea、WorkBuddy、OpenCode、Pi、Bolt、Roo Code** 或任意 AI 编程 Agent，只需复制以下指令直接发给您的 AI Agent，它即可全自动为您拉取代码到本地、安装环境依赖并一键启动应用！
 
 ```text
 请按照以下步骤为我全自动克隆仓库、安装依赖并启动【视译宝 ShiYiBao】音视频AI翻译应用：
