@@ -133,7 +133,9 @@ export default function App() {
     }
 
     void checkActiveTaskStatus()
-    const timer = setInterval(checkActiveTaskStatus, 2500)
+    // 该轮询仅用于导航栏“后台任务”徽章；任务详情页 ProcessingState 已在更高频轮询同一状态，
+    // 这里放慢到 4s 以减少对同一 /status 接口的重复请求。
+    const timer = setInterval(checkActiveTaskStatus, 4000)
     return () => clearInterval(timer)
   }, [])
 

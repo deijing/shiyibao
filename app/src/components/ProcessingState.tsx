@@ -138,6 +138,8 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
   const completeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const completedRef = useRef(false)
   const logsContainerRef = useRef<HTMLDivElement | null>(null)
+  // 字幕在进入合成/混音阶段后就不再变化，冻结后停止每轮重复拉取整段字幕。
+  const subtitlesFrozenRef = useRef(false)
 
   const [isRetrying, setIsRetrying] = useState(false)
 
@@ -172,11 +174,20 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
 
   const pollData = useCallback(async () => {
     try {
-      const [s, latestLogs, realSubs] = await Promise.all([
-        getTaskStatus(taskId),
+      const s = await getTaskStatus(taskId)
+      // 早期阶段字幕仍在增长需持续拉取；进入合成/混音后拉取一次即冻结，避免长视频每 1.5s 重复搬运整段字幕。
+      const earlyStage =
+        s.stage === 'pending' ||
+        s.stage === 'extracting_audio' ||
+        s.stage === 'transcribing' ||
+        s.stage === 'translating'
+      const [latestLogs, realSubs] = await Promise.all([
         getTaskLogs(taskId),
-        getSubtitles(taskId).catch(() => [] as SubtitleSegment[]),
+        earlyStage || !subtitlesFrozenRef.current
+          ? getSubtitles(taskId).catch(() => [] as SubtitleSegment[])
+          : Promise.resolve(null as SubtitleSegment[] | null),
       ])
+      if (!earlyStage) subtitlesFrozenRef.current = true
       setStatus(s)
 
       const currentAutoStep = stageToStepNumber(s.stage)
@@ -208,7 +219,11 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
 
       if (s.stage === 'error') {
         setError(s.error ?? '处理过程中发生错误')
-        if (intervalRef.current) clearInterval(intervalRef.current)
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          // 置空后「重试」才能通过 !intervalRef.current 判定重新启动轮询。
+          intervalRef.current = null
+        }
         return
       }
 
@@ -219,7 +234,10 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
 
       if (allDone && !completedRef.current) {
         completedRef.current = true
-        if (intervalRef.current) clearInterval(intervalRef.current)
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
         clearActiveTaskId()
         completeTimerRef.current = setTimeout(onComplete, 1200)
       }
@@ -232,7 +250,10 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
     pollData()
     intervalRef.current = setInterval(pollData, 1500)
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
       if (completeTimerRef.current) clearTimeout(completeTimerRef.current)
     }
   }, [pollData])
