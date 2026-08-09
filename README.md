@@ -28,6 +28,37 @@
 
 ---
 
+## ⚡ AI Agent 一键部署 (Recommended)
+
+> **给用户的提示**：如果您使用的是 **Cursor、Claude Code、Windsurf、Bolt、Roo Code** 或任意 AI 编程 Agent，只需复制以下指令直接发给您的 AI Agent，它即可全自动为您拉取代码到本地、安装环境依赖并一键启动应用！
+
+```text
+请按照以下步骤为我全自动克隆仓库、安装依赖并启动【视译宝 ShiYiBao】音视频AI翻译应用：
+
+1. 克隆 GitHub 仓库到本地：
+   - 运行：git clone https://github.com/deijing/shiyibao.git
+   - 进入项目目录：cd shiyibao
+
+2. 安装 Python 与 Node 环境依赖：
+   - 检查并创建 Python 虚拟环境：若不存在 `.venv`，运行 `python3 -m venv .venv` 创建。
+   - 激活 `.venv` 并安装 Python 后端依赖：运行 `. .venv/bin/activate && pip install -r requirements.txt`。
+   - 进入 `app/` 目录安装前端 Node 依赖：运行 `cd app && npm ci && cd ..`。
+
+3. 检查系统基础设施：
+   - 确认系统 PATH 中已包含带 libass 字幕烧录支持的 FFmpeg 和 Node.js (>=20.19 或 >=22.12)。
+
+4. 一键拉起双模服务：
+   - 在已激活的 Python 虚拟环境下，从项目根目录运行一键启动脚本：
+     . .venv/bin/activate && python start.py
+   - 说明：`start.py` 会在后台同时守护拉起 FastAPI 后端 (http://127.0.0.1:8000) 与 React Vite 前端 (http://127.0.0.1:5173)。
+
+5. 自动验证与交付：
+   - 执行 Curl 健康检查验证后端状态：`curl -s http://127.0.0.1:8000/api/health`
+   - 确认返回 {"status":"ok", ...} 并且 Vite 服务准备就绪后，向我汇报部署完成，并输出前端入口：http://127.0.0.1:5173/。
+```
+
+---
+
 ## ✨ 核心特性
 
 <div justify="center">
@@ -120,30 +151,7 @@ graph TD
 
 ## 🚀 快速开始
 
-### 🤖 AI Agent 一键部署 (Recommended)
-
-如果您使用的是 **Cursor、Claude Code、Windsurf、Bolt、Roo Code** 或任意 AI 编程 Agent，只需复制以下指令直接发给您的 AI Agent，即可全自动完成依赖安装与服务拉起：
-
-```text
-请按照以下步骤为我全自动初始化、安装依赖并启动【视译宝 ShiYiBao】音视频AI翻译应用：
-
-1. 检测与安装依赖：
-   - 检查项目根目录是否存在 Python 虚拟环境 `.venv`；若不存在，运行 `python3 -m venv .venv` 创建。
-   - 激活 `.venv` 并安装 Python 后端依赖：运行 `. .venv/bin/activate && pip install -r requirements.txt`。
-   - 进入 `app/` 目录，安装前端 Node 依赖：运行 `cd app && npm ci`。
-
-2. 检查系统基础设施：
-   - 确认系统 PATH 中已包含带 libass 字幕渲染支持的 FFmpeg 和 Node.js (>=20.19 或 >=22.12)。
-
-3. 启动双模服务：
-   - 在已激活的 Python 虚拟环境下，从根目录运行一键启动脚本：
-     . .venv/bin/activate && python start.py
-   - 说明：`start.py` 会在后台同时守护拉起 FastAPI 后端 (http://127.0.0.1:8000) 与 React Vite 前端 (http://127.0.0.1:5173)。
-
-4. 自动验证与交付：
-   - 执行 Curl 健康检查验证后端状态：`curl -s http://127.0.0.1:8000/api/health`
-   - 确认返回 {"status":"ok", ...} 并且 Vite 准备就绪后，向我汇报部署完成，并输出前端入口：http://127.0.0.1:5173/。
-```
+> 💡 **提示**：推荐使用 [⚡ AI Agent 一键部署](#-ai-agent-一键部署-recommended) 复制部署指令给您的 AI 助手完成全自动安装与启动。
 
 ### 🛠️ 手动环境准备
 
