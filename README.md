@@ -32,7 +32,7 @@
 | 特性分类 | 核心亮点与技术优势 |
 | :--- | :--- |
 | **🌐 全语种双向互译** | 支持 **英文 ⇄ 中文**、日/韩/法/德/西/俄等全球主要语种任意互相重构转译，自动保持上下文标点与口语化表达 |
-| **🧠 多 AI 大模型生态** | 深度集成 **Gemini 2.0 (Flash/Pro)**、**OpenAI (GPT-4o/mini)**、**DeepSeek (V3/R1)**、**Claude 3.5**、**MiMo**、**Ollama 私有大模型** 与标准自定义 API |
+| **🧠 多 AI 大模型生态** | 深度集成 **Gemini 3.1 Pro / 3.6 Flash**、**OpenAI (GPT-5.6 Sol / GPT-4o)**、**DeepSeek (V4 / R1 深度推理)**、**Claude 3.6 Sonnet**、**MiMo**、**Ollama 私有大模型** 与标准自定义 API |
 | **🎙️ 声纹克隆与配音** | 小米 MiMo 多音色高保真 TTS 语音合成，内置冰糖、甜美、沉稳、男声、英文等多角色预设库，FFmpeg 智能保留原片 BGM |
 | **🖥️ 独立双卡片工作台** | 16:9 原画视频主卡片 + 独立白底字幕/AI 学习卡片 (`gap-5` 优雅分离)，支持字幕实时滑动居中跟随定位 |
 | **💬 交互式 AI 问答助教** | 内置高对比度 `MarkdownRenderer`，提供结构化**核心摘要**、**学习大纲**与**交互式 AI 字幕对话流 (Chat Thread)** |
@@ -51,10 +51,10 @@
 ```mermaid
 flowchart LR
     A[视译宝 翻译/分析引擎] --> B{统一大模型适配层}
-    B --> C["Google Gemini (2.0 Flash / Pro / 1.5 Pro)"]
-    B --> D["OpenAI (GPT-4o / GPT-4o-mini / o3-mini)"]
-    B --> E["DeepSeek (V3 / R1 深度思考模型)"]
-    B --> F["Anthropic Claude (3.5 Sonnet / Haiku)"]
+    B --> C["Google Gemini (Gemini 3.1 Pro / 3.6 Flash / 2.5 Pro)"]
+    B --> D["OpenAI (GPT-5.6 Sol / GPT-4o / o3-mini)"]
+    B --> E["DeepSeek (V4 / R1 深度思考模型)"]
+    B --> F["Anthropic Claude (3.6 Sonnet / Opus 5 / 3.5 Sonnet)"]
     B --> G["Ollama / LocalAI (本地私有化局域网模型)"]
     B --> H["自定义 OpenAI 兼容接口 (v1/chat/completions)"]
 ```

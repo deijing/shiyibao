@@ -109,7 +109,7 @@ export const AI_PRESETS: ApiPreset[] = [
     logo: GeminiLogo,
     format: 'Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com',
-    defaultModel: 'gemini-2.0-flash',
+    defaultModel: 'gemini-3.6-flash',
     getKeyUrl: 'https://aistudio.google.com/api-keys',
   },
   {
@@ -118,7 +118,7 @@ export const AI_PRESETS: ApiPreset[] = [
     logo: DeepSeekLogo,
     format: 'OpenAI',
     baseUrl: 'https://api.deepseek.com',
-    defaultModel: 'deepseek-chat',
+    defaultModel: 'deepseek-reasoner',
     getKeyUrl: 'https://platform.deepseek.com/api_keys',
   },
   {
@@ -145,7 +145,7 @@ export const AI_PRESETS: ApiPreset[] = [
     logo: OpenAILogo,
     format: 'OpenAI',
     baseUrl: 'https://api.openai.com',
-    defaultModel: 'gpt-4o-mini',
+    defaultModel: 'gpt-5.6-sol',
     getKeyUrl: 'https://platform.openai.com/api-keys',
   },
   {
@@ -154,26 +154,34 @@ export const AI_PRESETS: ApiPreset[] = [
     logo: ClaudeLogo,
     format: 'Anthropic',
     baseUrl: 'https://api.anthropic.com',
-    defaultModel: 'claude-3-5-sonnet-20241022',
+    defaultModel: 'claude-3-6-sonnet',
     getKeyUrl: 'https://console.anthropic.com/',
   },
 ]
 
 export const DEFAULT_GEMINI_MODELS = [
-  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (推荐 - 高速多模态)' },
-  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite (高性价比轻量级)' },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (快速全能)' },
-  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (深度推理/长上下文)' },
+  { id: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro (最新旗舰 - 深度推理/百万上下文)' },
+  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (最新主力 - 极速智能/强 Agent)' },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (高性能多模态)' },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (推荐 - 均衡速效)' },
+  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (经典稳定版)' },
+  { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol (OpenAI 最新 flagship 旗舰)' },
+  { id: 'gpt-4o', name: 'GPT-4o (OpenAI 经典多模态)' },
+  { id: 'claude-3-6-sonnet', name: 'Claude 3.6 Sonnet (Anthropic 旗舰)' },
+  { id: 'deepseek-r1', name: 'DeepSeek R1 / V4 (深度推理)' },
 ]
 
 export function getGeminiModelDisplayName(modelId?: string): string {
-  if (!modelId) return 'Gemini 2.0 Flash'
-  if (modelId === 'gemini-2.0-flash') return 'Gemini 2.0 Flash'
-  if (modelId === 'gemini-2.5-flash-lite') return 'Gemini 2.5 Flash-Lite'
+  if (!modelId) return 'Gemini 3.6 Flash'
+  if (modelId === 'gemini-3.1-pro') return 'Gemini 3.1 Pro'
+  if (modelId === 'gemini-3.6-flash') return 'Gemini 3.6 Flash'
+  if (modelId === 'gemini-2.5-pro') return 'Gemini 2.5 Pro'
   if (modelId === 'gemini-2.5-flash') return 'Gemini 2.5 Flash'
-  if (modelId === 'gemini-1.5-flash') return 'Gemini 1.5 Flash'
-  if (modelId === 'gemini-1.5-pro') return 'Gemini 1.5 Pro'
+  if (modelId === 'gemini-2.0-flash') return 'Gemini 2.0 Flash'
+  if (modelId === 'gpt-5.6-sol') return 'GPT-5.6 Sol'
+  if (modelId === 'gpt-4o') return 'GPT-4o'
+  if (modelId === 'claude-3-6-sonnet') return 'Claude 3.6 Sonnet'
+  if (modelId === 'deepseek-r1') return 'DeepSeek R1'
 
   // 标准化原始字符串格式
   return modelId
