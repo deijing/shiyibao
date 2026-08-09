@@ -12,14 +12,41 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.7'
+export const CURRENT_VERSION = 'v0.1.8'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
+  {
+    version: 'v0.1.8',
+    date: '2026-08-09',
+    title: '稳定性修复、轮询热点治理与长视频 TTS 混音性能优化',
+    isLatest: true,
+    highlights: [
+      '修复任务出错后点击「一键重试 / 从断点继续」界面不再刷新的问题，轮询可正确重新启动',
+      '降低处理页与导航栏对同一任务状态的重复轮询，合成阶段后冻结字幕全量重拉，减少无效网络与渲染开销',
+      '历史任务列表不再每次扫字幕文件提炼标题：首次推导后落库，避免 /api/tasks 随历史增长变慢',
+      '长视频批处理 TTS 音轨拼接改为分批混音，规避超长 ffmpeg filtergraph 带来的内存与命令行风险',
+    ],
+    details: {
+      improvements: [
+        '导航栏活动任务状态轮询由 2.5s 放慢到 4s，减轻与 ProcessingState 高频轮询的重复请求',
+        '处理页进入合成 / 混音阶段后停止重复拉取整段字幕，降低长视频场景下的前端重渲染抖动',
+        '抽出字幕标题提炼 helper，首次推导后写入 task.json，后续轮询直接读缓存',
+        '偏好设置后端持久化补齐 geminiApiUrl / geminiApiFormat / sourceLang / streamMode / originalAudioVolume 等字段，与前端 localStorage 对齐',
+        'TTS 片段时长探测改为 asyncio.to_thread，避免 wave.open 阻塞事件循环',
+        '片段数超过 48 时分批混音再叠加，临时分批目录自动清理',
+      ],
+      fixes: [
+        '修复 ProcessingState 在 error/complete 时 clearInterval 后未置空 intervalRef，导致重试无法重启轮询',
+        '移除 TaskStatusResponse 中从未赋值、前端也未读取的 gemini_api_url / gemini_api_format 死字段',
+        '清理翻译模块重复的 is_429 判定与未使用的 batch_idx 参数',
+        '统一 language_detector / voice 路由等文件中散落的 mid-file import，降低维护歧义',
+      ],
+    },
+  },
   {
     version: 'v0.1.7',
     date: '2026-08-09',
     title: '独立白底双卡片工作台、全量字幕 AI 对话问答与 60fps 性能引擎',
-    isLatest: true,
     highlights: [
       '视频工作台与白底字幕卡片双卡片分离布局：彻底取消黑色一体框，完全还原经典视频工作台，右侧全新打造独立白底字幕与 AI 学习卡片',
       '交互式 AI 视频问答助教与 Markdown 渲染引擎：内置 MarkdownRenderer 渲染器，高对比度呈现标题、代码块与表格，并支持连续对话流与快捷提问',

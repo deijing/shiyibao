@@ -4,13 +4,13 @@
 
 <img src="app/public/logo.png" width="280" alt="ShiYiBao Logo" />
 
-# 视译宝 (ShiYiBao) v0.1.7
+# 视译宝 (ShiYiBao) v0.1.8
 
 ### 全自动化 AI 视频跨语言转译、多模型智能翻译与原声音色克隆重构工作台
 
 [![Official Website](https://img.shields.io/badge/Official_Website-shiyibao--web.vercel.app-7c3aed?logo=vercel&logoColor=white&style=for-the-badge)](https://shiyibao-web.vercel.app/)
 [![GitHub Repository](https://img.shields.io/badge/GitHub-deijing%2Fshiyibao-blue?logo=github&style=for-the-badge)](https://github.com/deijing/shiyibao)
-[![Version](https://img.shields.io/badge/Version-v0.1.7-8b5cf6?style=for-the-badge)](https://github.com/deijing/shiyibao/releases)
+[![Version](https://img.shields.io/badge/Version-v0.1.8-8b5cf6?style=for-the-badge)](https://github.com/deijing/shiyibao/releases)
 [![License](https://img.shields.io/badge/License-MIT-emerald?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blueviolet?style=for-the-badge)](https://github.com/deijing/shiyibao/releases)
 [![Tauri](https://img.shields.io/badge/Tauri-v2.0-FFC107?logo=tauri&logoColor=black&style=for-the-badge)](https://tauri.app)
