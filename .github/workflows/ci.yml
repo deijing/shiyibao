@@ -27,9 +27,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-      - name: Install FFmpeg (macOS)
+      - name: Install FFmpeg with libass support (macOS)
         if: matrix.os == 'macos-latest'
-        run: which ffmpeg || brew install ffmpeg || true
+        run: |
+          brew tap homebrew-ffmpeg/ffmpeg
+          brew install homebrew-ffmpeg/ffmpeg/ffmpeg || true
       - name: Install FFmpeg (Windows)
         if: matrix.os == 'windows-latest'
         run: choco install ffmpeg --yes --no-progress

@@ -76,9 +76,11 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install FFmpeg (macOS)
+      - name: Install FFmpeg with libass support (macOS)
         if: runner.os == 'macOS'
-        run: which ffmpeg || brew install ffmpeg || true
+        run: |
+          brew tap homebrew-ffmpeg/ffmpeg
+          brew install homebrew-ffmpeg/ffmpeg/ffmpeg || true
 
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
