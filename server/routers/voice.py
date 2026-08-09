@@ -4,6 +4,7 @@ import logging
 import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from ..config import MIMO_API_KEY, MIMO_API_URL, VOICE_PREVIEWS_DIR, get_user_settings
 
@@ -62,9 +63,6 @@ async def voice_preview(voice_name: str) -> FileResponse:
         cached.write_bytes(base64.b64decode(audio_b64))
 
     return FileResponse(str(cached), media_type="audio/wav")
-
-
-from pydantic import BaseModel
 
 
 class KeyTestRequest(BaseModel):

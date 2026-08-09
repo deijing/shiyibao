@@ -5,6 +5,8 @@ from typing import Sequence
 
 import httpx
 
+from .translate import build_ai_request_args
+
 logger = logging.getLogger(__name__)
 
 LANG_CODE_TO_NAME = {
@@ -78,9 +80,6 @@ def rule_based_detect_language(text: str) -> tuple[str, str]:
         return best_lang, LANG_CODE_TO_NAME[best_lang]
 
     return "en", LANG_CODE_TO_NAME["en"]
-
-
-from .translate import build_ai_request_args
 
 
 async def detect_language_with_gemini(

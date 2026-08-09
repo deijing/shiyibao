@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Callable
 import json
 import logging
+import random
 from pathlib import Path
 
 import httpx
@@ -9,8 +10,6 @@ import httpx
 from ..performance import get_performance_settings, translate_limiter
 
 logger = logging.getLogger(__name__)
-
-import random
 
 MAX_RETRIES = 5
 RETRY_BACKOFF_BASE = 2.0
@@ -338,7 +337,7 @@ async def translate_subtitles(
             max_keepalive_connections=performance.translate_concurrency,
         ),
     ) as client:
-        async def translate_batch(batch_idx: int, batch_start: int, batch: list[dict]) -> tuple[int, list[dict], list]:
+        async def translate_batch(batch_start: int, batch: list[dict]) -> tuple[int, list[dict], list]:
             source_texts = [seg["source_text"] for seg in batch]
             user_prompt = json.dumps(source_texts, ensure_ascii=False)
 
@@ -381,7 +380,6 @@ async def translate_subtitles(
                             break
 
                         # 针对 429 Rate Limit 特殊加大退避秒数并解析 Retry-After 标头
-                        is_429 = isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429
                         retry_after = None
                         if is_429 and exc.response:
                             ra_hdr = exc.response.headers.get("Retry-After") or exc.response.headers.get("retry-after")
@@ -414,8 +412,8 @@ async def translate_subtitles(
             return batch_start, batch, translations
 
         results = await asyncio.gather(*(
-            translate_batch(i, batch_start, batch)
-            for i, (batch_start, batch) in enumerate(batches)
+            translate_batch(batch_start, batch)
+            for batch_start, batch in batches
         ))
 
         fallback_count = 0
