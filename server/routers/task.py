@@ -219,27 +219,46 @@ def _sync_project_folder_alias(task_id: str, title: str | None = None) -> tuple[
     return safe_name, proj_dir_path
 
 
+_TITLE_STRIP_PREFIXES = (
+    "在今天的节目中，", "在今天的视频中，", "大家好，", "欢迎来到",
+    "今天我们来", "在这个视频中，", "Hello ", "Hi ",
+)
+
+
+def _title_from_subtitles(task_dir: Path, target_lang: str) -> str | None:
+    """从已生成的字幕文件里提炼一个简短标题；缺失或无法提炼时返回 None。
+
+    调用方应把结果持久化到 task.json，避免每次轮询都重新读取解析整份字幕文件。
+    """
+    for name in (f"subtitles_{target_lang}.json", "subtitles.json"):
+        sub_file = task_dir / name
+        if not sub_file.exists():
+            continue
+        try:
+            segments = json.loads(sub_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(segments, list) or not segments:
+            return None
+        sample = (segments[0].get("translated_text") or segments[0].get("source_text") or "").strip()
+        for prefix in _TITLE_STRIP_PREFIXES:
+            if sample.startswith(prefix):
+                sample = sample[len(prefix):].strip()
+        clean = sample.split("，")[0].split("。")[0].split("!")[0].strip()
+        if len(clean) >= 4:
+            return clean[:25]
+        return None
+    return None
+
+
 def _status(meta: dict) -> TaskStatusResponse:
     video_title = meta.get("video_title")
     task_id = meta.get("task_id")
     if not video_title and task_id:
-        sub_file = _task_dir(task_id) / f"subtitles_{meta.get('target_lang', 'zh')}.json"
-        if not sub_file.exists():
-            sub_file = _task_dir(task_id) / "subtitles.json"
-        if sub_file.exists():
-            try:
-                segments = json.loads(sub_file.read_text(encoding="utf-8"))
-                if segments:
-                    sample = (segments[0].get("translated_text") or segments[0].get("source_text") or "").strip()
-                    for prefix in ["在今天的节目中，", "在今天的视频中，", "大家好，", "欢迎来到", "今天我们来", "在这个视频中，", "Hello ", "Hi "]:
-                        if sample.startswith(prefix):
-                            sample = sample[len(prefix):].strip()
-                    clean = sample.split("，")[0].split("。")[0].split("!")[0].strip()
-                    if len(clean) >= 4:
-                        video_title = clean[:25]
-                        _update_meta(task_id, video_title=video_title)
-            except Exception:
-                pass
+        derived = _title_from_subtitles(_task_dir(task_id), meta.get("target_lang", "zh"))
+        if derived:
+            video_title = derived
+            _update_meta(task_id, video_title=video_title)
 
     proj_folder_name = meta.get("project_folder_name")
     proj_dir = meta.get("project_dir") or (str(_task_dir(task_id).resolve()) if task_id else "")
@@ -626,20 +645,12 @@ async def list_tasks() -> list[dict]:
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             if not meta.get("video_title"):
-                sub_file = task_dir / f"subtitles_{meta.get('target_lang', 'zh')}.json"
-                if not sub_file.exists():
-                    sub_file = task_dir / "subtitles.json"
-                if sub_file.exists():
+                derived = _title_from_subtitles(task_dir, meta.get("target_lang", "zh"))
+                if derived:
+                    meta["video_title"] = derived
+                    # 落库一次，避免 /api/tasks 每次轮询都重新扫描解析整份字幕文件。
                     try:
-                        segs = json.loads(sub_file.read_text(encoding="utf-8"))
-                        if segs:
-                            sample = (segs[0].get("translated_text") or segs[0].get("source_text") or "").strip()
-                            for prefix in ["在今天的节目中，", "在今天的视频中，", "大家好，", "欢迎来到", "今天我们来", "Hello ", "Hi "]:
-                                if sample.startswith(prefix):
-                                    sample = sample[len(prefix):].strip()
-                            clean = sample.split("，")[0].split("。")[0].split("!")[0].strip()
-                            if len(clean) >= 4:
-                                meta["video_title"] = clean[:25]
+                        _update_meta(meta["task_id"], video_title=derived)
                     except Exception:
                         pass
             tasks.append(meta)

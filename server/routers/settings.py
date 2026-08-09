@@ -10,9 +10,14 @@ router = APIRouter(tags=["settings"])
 class SettingsPayload(BaseModel):
     geminiApiKey: Optional[str] = None
     geminiModel: Optional[str] = None
+    geminiApiUrl: Optional[str] = None
+    geminiApiFormat: Optional[str] = None
     xiaomiTtsKey: Optional[str] = None
     mimoVoice: Optional[str] = None
+    sourceLang: Optional[str] = None
     targetLang: Optional[str] = None
+    streamMode: Optional[str] = None
+    originalAudioVolume: Optional[float] = None
     customGeminiModels: Optional[List[Dict[str, str]]] = None
 
 

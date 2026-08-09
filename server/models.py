@@ -42,8 +42,6 @@ class TaskStatusResponse(BaseModel):
     voice: Optional[str] = None
     stream_mode: Optional[str] = "streaming"
     original_audio_volume: float = 0.2
-    gemini_api_url: Optional[str] = ""
-    gemini_api_format: Optional[str] = "Gemini"
     preview_ready: bool = False
     preview_url: Optional[str] = None
     preview_duration: float = 0.0
