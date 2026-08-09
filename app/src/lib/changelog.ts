@@ -12,14 +12,45 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.6'
+export const CURRENT_VERSION = 'v0.1.7'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
+  {
+    version: 'v0.1.7',
+    date: '2026-08-09',
+    title: '独立白底双卡片工作台、全量字幕 AI 对话问答与 60fps 性能引擎',
+    isLatest: true,
+    highlights: [
+      '视频工作台与白底字幕卡片双卡片分离布局：彻底取消黑色一体框，完全还原经典视频工作台，右侧全新打造独立白底字幕与 AI 学习卡片',
+      '交互式 AI 视频问答助教与 Markdown 渲染引擎：内置 MarkdownRenderer 渲染器，高对比度呈现标题、代码块与表格，并支持连续对话流与快捷提问',
+      '字幕全格式导出与进度平滑滑动跟随：支持一键导出 SRT、VTT、TXT、JSON 及全量复制，视频播放时字幕列表实时动态居中平滑滑动高亮定位',
+      '60fps 极速性能引擎与轻量架构：引入 15fps 毫秒级防抖节流阀、SVG 波形 pre-computation、React.memo 字幕卡片与轻量 Base64 缩略图抽取，消除播放卡顿与 CPU 损耗',
+    ],
+    details: {
+      features: [
+        '新增右侧独立白底字幕与 AI 学习面板卡片，支持与左侧视频主工作台 gap-5 优雅分离',
+        '新增 MarkdownRenderer 高对比度富文本渲染组件，完美支持 Light/Dark 模式下的标题、粗体、代码块（带复制代码）、列表与表格',
+        '新增交互式 AI 视频问答助教对话流（Chat Thread），支持连续提问、清空对话历史与预设 Prompt 一键追问',
+        '新增字幕列表导出菜单（SRT/VTT/TXT/JSON/一键复制全量字幕）与多语言模式（双语/译文/原文）快速切换',
+        '后端新增 @router.post("/task/{task_id}/ai-analyze") 接口，支持调用 Gemini/OpenAI 进行视频深度提炼与离线兜底分析',
+      ],
+      improvements: [
+        '全面优化界面 Icon 设计（替换为 ListFilter, Wand2, FileDown, Languages, Compass, Clock, Activity, Bot 等语义化 Lucide 图标）',
+        '引入 15fps 时间同步防抖节流阀，将视频播放时 React 渲染频率由 60~120Hz 降至 15Hz，大幅降低 CPU 占用',
+        '使用 useMemo 预计算并记忆化 180 根 SVG 动态波形柱，播放过程中零 DOM 节点重建开销',
+        '将字幕列表卡片抽象为 React.memo 独立组件，高亮切换时仅刷新 2 条相关 DOM 节点',
+        '优化缩略图抽取逻辑（由 30 帧精简为 16 帧 JPEG 压缩），显著缩短视频载入时间',
+      ],
+      fixes: [
+        '修复白底模式下 Markdown 字体颜色过浅（如硬编码 text-slate-200/text-white）导致字迹看不见的问题',
+        '修复播放时频繁 setState 导致的界面微卡顿与浏览器掉帧问题',
+      ],
+    },
+  },
   {
     version: 'v0.1.6',
     date: '2026-08-08',
     title: '全流程无缝断点续传、AIMD 动态控速与标语工程目录升级',
-    isLatest: true,
     highlights: [
       '全流程五重 Checkpoint 断点复用检查，音轨/ASR/翻译/切片极速秒级复用，支持一键无感断点恢复',
       '全新 AIMD 动态自适应速率调节器，智能防御 AI 大模型 429 Rate Limit 限流与自动探顶冲刺',

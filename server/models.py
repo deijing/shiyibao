@@ -92,3 +92,20 @@ class ScanDirectoryResponse(BaseModel):
     message: str = ""
 
 
+class AIAnalyzeRequest(BaseModel):
+    mode: str = "summary"  # summary | study_notes | qa | custom
+    custom_prompt: Optional[str] = None
+    gemini_api_key: Optional[str] = None
+    gemini_api_url: Optional[str] = None
+    gemini_api_format: Optional[str] = "Gemini"
+    gemini_model: Optional[str] = "gemini-2.0-flash"
+
+
+class AIAnalyzeResponse(BaseModel):
+    success: bool
+    analysis: str
+    mode: str
+    message: Optional[str] = None
+
+
+

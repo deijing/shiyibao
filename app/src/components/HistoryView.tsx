@@ -511,39 +511,32 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                       <TaskVideoThumbnail taskId={task.task_id} alt={task.filename} />
 
                       <div className="flex-grow min-w-0">
-                        {/* 标题与状态徽标头部（用户勾选位置 2） */}
-                        <div className="flex items-start justify-between gap-2 mb-1 flex-wrap">
-                          <div className="flex flex-col gap-0.5 min-w-0 max-w-md lg:max-w-lg">
-                            <h3
-                              onClick={() => {
-                                if (isSelectionMode) return;
-                                if (!isError) onOpenTask(task.task_id, task.stage);
-                              }}
-                              className={`font-bold text-slate-900 dark:text-slate-100 text-sm sm:text-base leading-snug truncate ${
-                                !isError && !isSelectionMode ? 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors' : ''
-                              }`}
-                              title={task.video_title || task.filename}
-                            >
-                              {task.video_title ? (
-                                <span className="flex items-center gap-1.5">
-                                  <Film className="w-4 h-4 text-indigo-500 shrink-0" />
-                                  <span className="truncate">{task.video_title}</span>
-                                </span>
-                              ) : (
-                                task.filename
-                              )}
-                            </h3>
-                            {task.video_title && (
-                              <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate" title={task.filename}>
-                                源文件: {task.filename}
-                              </p>
+                        {/* 标题 */}
+                        <div className="mb-1.5 min-w-0 max-w-md lg:max-w-xl">
+                          <h3
+                            onClick={() => {
+                              if (isSelectionMode) return;
+                              if (!isError) onOpenTask(task.task_id, task.stage);
+                            }}
+                            className={`font-bold text-slate-900 dark:text-slate-100 text-sm sm:text-base leading-snug truncate ${
+                              !isError && !isSelectionMode ? 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors' : ''
+                            }`}
+                            title={task.video_title || task.filename}
+                          >
+                            {task.video_title ? (
+                              <span className="flex items-center gap-1.5">
+                                <Film className="w-4 h-4 text-indigo-500 shrink-0" />
+                                <span className="truncate">{task.video_title}</span>
+                              </span>
+                            ) : (
+                              task.filename
                             )}
-                          </div>
-
-                          <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full font-medium shrink-0 border ${cfg.bg} ${cfg.color} ${cfg.border}`}>
-                            <StatusIcon className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
-                            {isProcessing ? `处理中 (${task.progress}%)` : cfg.label}
-                          </span>
+                          </h3>
+                          {task.video_title && (
+                            <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate mt-0.5" title={task.filename}>
+                              源文件: {task.filename}
+                            </p>
+                          )}
                         </div>
 
                         {/* 元数据标签 */}
@@ -625,8 +618,13 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                       </div>
                     </div>
 
-                    {/* 右侧区域：进度与操作按钮 */}
-                    <div className="flex items-center gap-3 shrink-0 self-end md:self-center pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-800 w-full md:w-auto justify-end">
+                    {/* 右侧区域：状态徽章与操作按钮极简对齐 */}
+                    <div className="flex items-center gap-2.5 sm:gap-3 shrink-0 self-end md:self-center pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-800 w-full md:w-auto justify-end">
+                      {/* 状态徽章：已完成 / 处理中 / 翻译失败 */}
+                      <span className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl font-semibold shrink-0 border shadow-2xs ${cfg.bg} ${cfg.color} ${cfg.border}`}>
+                        <StatusIcon className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
+                        {isProcessing ? `处理中 (${task.progress}%)` : cfg.label}
+                      </span>
                       {isProcessing && (
                         <div className="w-24 sm:w-28 mr-2 hidden sm:block">
                           <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden border border-slate-200/50 dark:border-slate-700/50">

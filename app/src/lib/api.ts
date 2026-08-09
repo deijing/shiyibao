@@ -462,3 +462,35 @@ export async function checkEnvironment(): Promise<EnvCheckResult> {
   return await res.json()
 }
 
+export interface AIAnalyzePayload {
+  mode: 'summary' | 'study_notes' | 'qa' | 'custom'
+  custom_prompt?: string
+  gemini_api_key?: string
+  gemini_api_url?: string
+  gemini_api_format?: string
+  gemini_model?: string
+}
+
+export interface AIAnalyzeResult {
+  success: boolean
+  analysis: string
+  mode: string
+  message?: string
+}
+
+export async function analyzeSubtitlesAI(
+  taskId: string,
+  payload: AIAnalyzePayload,
+): Promise<AIAnalyzeResult> {
+  const res = await apiFetch(`/api/task/${taskId}/ai-analyze`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.detail || 'AI 分析调用失败')
+  }
+  return data
+}
+
+

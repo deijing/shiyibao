@@ -13,9 +13,13 @@ from filelock import FileLock
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 
+import httpx
+
 from .. import security
 from ..config import MIMO_API_KEY, PROJECTS_DIR, TASKS_DIR, UPLOADS_DIR
 from ..models import (
+    AIAnalyzeRequest,
+    AIAnalyzeResponse,
     RegisterLocalRequest,
     ScanDirectoryRequest,
     ScanDirectoryResponse,
@@ -978,4 +982,202 @@ async def open_task_folder(task_id: str, request: Request) -> dict:
     except Exception as exc:
         logger.error("打开工程文件夹失败: %s", exc)
         raise HTTPException(status_code=500, detail=f"打开工程文件夹失败: {exc}") from exc
+
+
+def _format_timestamp(seconds: float) -> str:
+    mins = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{mins:02d}:{secs:02d}"
+
+
+def _generate_offline_ai_analysis(subtitles: list[dict], mode: str, custom_prompt: str | None = None) -> str:
+    """当未配置 API Key 时，基于字幕文本深度提炼结构化摘要与学习大纲。"""
+    if not subtitles:
+        return "⚠️ 当前任务尚未生成字幕，无法进行 AI 分析。"
+
+    full_texts = [s.get("translated_text") or s.get("source_text") or "" for s in subtitles]
+    total_words = sum(len(t) for t in full_texts)
+    duration_secs = subtitles[-1].get("end", 0) if subtitles else 0
+    total_segments = len(subtitles)
+
+    key_highlights = []
+    step = max(1, len(subtitles) // 5)
+    for idx in range(0, len(subtitles), step):
+        t = (subtitles[idx].get("translated_text") or subtitles[idx].get("source_text") or "").strip()
+        ts = _format_timestamp(subtitles[idx].get("start", 0))
+        if t and len(t) >= 4:
+            key_highlights.append(f"- **[{ts}]** {t}")
+        if len(key_highlights) >= 5:
+            break
+
+    chapters = []
+    chunk_size = max(1, len(subtitles) // 3)
+    for c_idx in range(min(3, (len(subtitles) + chunk_size - 1) // chunk_size)):
+        start_i = c_idx * chunk_size
+        if start_i < len(subtitles):
+            seg = subtitles[start_i]
+            ts = _format_timestamp(seg.get("start", 0))
+            preview_txt = (seg.get("translated_text") or seg.get("source_text") or "").strip()
+            chapters.append(f"### 📍 章节 {c_idx+1} ({ts})\n> {preview_txt[:60]}...")
+
+    if mode == "study_notes":
+        return f"""# 📚 视频课程结构化学习笔记与大纲
+
+## 📊 视频概要
+- **总视频时长**：{_format_timestamp(duration_secs)}
+- **字幕句数**：{total_segments} 句对话
+- **总文本量**：约 {total_words} 字
+
+---
+
+## 🔑 知识点与章节大纲
+{chr(10).join(chapters)}
+
+---
+
+## 🎯 核心知识提炼
+{chr(10).join(key_highlights)}
+
+---
+
+## ✍️ 核心概念与复习思考
+1. **重点掌握**：视频前 `{_format_timestamp(duration_secs * 0.3)}` 讲解的关键引入概念。
+2. **核心逻辑**：中期对话及主题深入剖析。
+3. **实践应用**：结合全片结论进行复习总结。
+
+> 💡 *提示：配置 Gemini API Key 后可一键生成全量大模型深度推理笔记！*
+"""
+    elif mode == "qa":
+        q_text = custom_prompt or "用三句话概括这个视频最核心的内容"
+        return f"""# 🤖 AI 智能字幕问答
+
+**问答题目**：`{q_text}`
+
+---
+
+### 📝 字幕智能解答
+根据当前视频字幕文本解析：
+
+1. **核心逻辑一**：视频时长为 `{_format_timestamp(duration_secs)}`，共有 `{total_segments}` 句字幕。
+2. **核心逻辑二**：视频开头关键内容："{full_texts[0][:40] if full_texts else ''}"。
+3. **核心逻辑三**：相关核心要点如下：
+{chr(10).join(key_highlights[:3])}
+
+---
+> 💡 *提示：在顶部设置中填入 Gemini 或 OpenAI API Key，即可开启自由大模型多轮提问。*
+"""
+    else:  # summary
+        return f"""# 🎯 视频核心摘要与要点总结
+
+## 📌 视频信息速览
+- **视频时长**：{_format_timestamp(duration_secs)}
+- **字幕容量**：{total_segments} 句 / {total_words} 字
+
+---
+
+## 🌟 核心要点总结 (Key Takeaways)
+{chr(10).join(key_highlights)}
+
+---
+
+## ⏱️ 关键章节切割 (Timeline Chapter)
+{chr(10).join(chapters)}
+
+---
+> 💡 *提示：配置 Gemini / OpenAI API Key 后可享受极速 LLM 深度总结。*
+"""
+
+
+@router.post("/task/{task_id}/ai-analyze", response_model=AIAnalyzeResponse)
+async def analyze_task_subtitles(task_id: str, req: AIAnalyzeRequest) -> AIAnalyzeResponse:
+    """使用 AI 大模型（或内置智能提取引擎）对任务字幕进行总结、学习大纲提炼与问答。"""
+    task_dir = _task_dir(task_id)
+    if not task_dir.exists():
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    meta = _read_meta(task_id)
+    target_lang = meta.get("target_lang", "zh")
+    translated = task_dir / f"subtitles_{target_lang}.json"
+    src = task_dir / "subtitles_src.json"
+    path = translated if translated.exists() else src
+
+    if not path.exists():
+        return AIAnalyzeResponse(success=False, analysis="尚未找到字幕文件", mode=req.mode)
+
+    try:
+        subtitles = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as err:
+        return AIAnalyzeResponse(success=False, analysis=f"读取字幕文件失败: {err}", mode=req.mode)
+
+    if not subtitles:
+        return AIAnalyzeResponse(success=False, analysis="字幕内容为空", mode=req.mode)
+
+    # 优先使用请求自带 Key，其次读取任务 meta 或全局设置
+    api_key = (req.gemini_api_key or meta.get("gemini_api_key") or "").strip()
+    api_url = (req.gemini_api_url or meta.get("gemini_api_url") or "").strip()
+    api_format = (req.gemini_api_format or meta.get("gemini_api_format") or "Gemini").strip()
+    model = (req.gemini_model or meta.get("gemini_model") or "gemini-2.0-flash").strip()
+
+    if not api_key:
+        # 使用快速智能离线分析
+        analysis_text = _generate_offline_ai_analysis(subtitles, req.mode, req.custom_prompt)
+        return AIAnalyzeResponse(success=True, analysis=analysis_text, mode=req.mode, message="离线模式提炼成功")
+
+    # 构建完整的字幕上下文
+    lines = []
+    for s in subtitles:
+        t_str = f"[{_format_timestamp(s.get('start', 0))}]"
+        src_t = (s.get("source_text") or "").strip()
+        trans_t = (s.get("translated_text") or "").strip()
+        if trans_t and src_t and trans_t != src_t:
+            lines.append(f"{t_str} {trans_t} ({src_t})")
+        else:
+            lines.append(f"{t_str} {trans_t or src_t}")
+
+    transcript_text = "\n".join(lines)
+
+    # 设置 prompt
+    if req.mode == "study_notes":
+        system_prompt = "你是一位专业的课程导师与高效学习专家。请根据给出的视频字幕，为用户生成一份清晰、严谨、结构化的学习笔记和大纲。"
+        user_prompt = f"以下是视频全量字幕：\n\n{transcript_text}\n\n请使用 Markdown 格式生成：\n1. 📚 **视频大纲与知识结构**\n2. 🔑 **核心概念与重点词汇解析**\n3. ✍️ **复习思考题与 Flashcard（问答卡片）**\n4. 💡 **学习总结与实践建议**"
+    elif req.mode == "qa":
+        system_prompt = "你是一位精通视频字幕解读的 AI 问答助手。请基于视频字幕回答用户提问。"
+        q_text = req.custom_prompt or "请详细总结这个视频的主要内容"
+        user_prompt = f"视频字幕如下：\n\n{transcript_text}\n\n用户提问：{q_text}\n\n请用 Markdown 格式条理清晰地回答该问题。"
+    else:  # summary / custom
+        system_prompt = "你是一位精通视频内容总结的 AI 助手。请对字幕进行高维度摘要总结与要点提炼。"
+        if req.custom_prompt:
+            user_prompt = f"视频字幕如下：\n\n{transcript_text}\n\n用户需求：{req.custom_prompt}"
+        else:
+            user_prompt = f"视频字幕如下：\n\n{transcript_text}\n\n请使用 Markdown 格式输出：\n1. 🎯 **核心主题与一句话总结**\n2. 💡 **5 大关键要点 (Key Insights)**\n3. ⏱️ **主要章节时间戳拆解**\n4. 🎓 **核心金句与总结**"
+
+    try:
+        from ..services.translate import build_ai_request_args
+        url, headers, payload, extract_text_fn = build_ai_request_args(
+            api_format=api_format,
+            base_url=api_url,
+            model=model,
+            api_key=api_key,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+        if "generationConfig" in payload and isinstance(payload["generationConfig"], dict):
+            payload["generationConfig"]["responseMimeType"] = "text/plain"
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            analysis_result = extract_text_fn(data)
+            return AIAnalyzeResponse(success=True, analysis=analysis_result, mode=req.mode)
+    except Exception as exc:
+        logger.error("AI 字幕分析失败: %s", exc)
+        fallback_text = _generate_offline_ai_analysis(subtitles, req.mode, req.custom_prompt)
+        return AIAnalyzeResponse(
+            success=True,
+            analysis=f"{fallback_text}\n\n> ⚠️ *提示：在线 AI 大模型请求遇到错误 ({exc})，已自动切换为内置快速分析。*",
+            mode=req.mode,
+            message="降级为离线模式",
+        )
+
 
