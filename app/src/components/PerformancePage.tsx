@@ -77,19 +77,19 @@ const CONTROLS: Array<{
   },
   {
     key: 'translate_concurrency',
-    title: 'Gemini 翻译并发',
-    description: '所有任务共享的 Gemini 批次请求槽位',
+    title: '模型并发',
+    description: '所有任务共享的 AI 模型批次请求槽位',
     min: 1,
     max: 8,
     icon: Languages,
     color: 'text-violet-600 bg-violet-500/10 dark:text-violet-400 dark:bg-violet-500/15',
     warningThreshold: 4,
-    warning: '并发过高可能触发 Gemini 429 速率限制',
+    warning: '并发过高可能触发 API 429 速率限制',
   },
   {
     key: 'translate_batch_size',
     title: '字幕批次大小',
-    description: '每次发送给 Gemini 的字幕条数，长视频可适当调大',
+    description: '每次发送给 AI 模型的字幕条数，长视频可适当调大',
     min: 5,
     max: 50,
     icon: Gauge,
@@ -258,7 +258,7 @@ export default function PerformancePage() {
             系统启动时会自动精准识别您当前电脑的 <strong>CPU 芯片型号、逻辑核心数与内存大小</strong>，全面兼容 Windows (x86/ARM64)、macOS 及 Linux。点击右上角“智能匹配推荐值”，即可根据您的具体硬件规格一键自动分配最佳并发与资源。
           </p>
           <p className="leading-relaxed text-slate-500 dark:text-slate-500">
-            降低并发不会中断已在运行的任务；Gemini 与 MiMo 属于云端服务，若遇到 429 速率限制可微调降低云端并发槽位。
+            降低并发不会中断已在运行的任务；AI 模型与 MiMo 属于云端服务，若遇到 429 速率限制可微调降低云端并发槽位。
           </p>
         </div>
       </div>

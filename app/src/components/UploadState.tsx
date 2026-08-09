@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { ArrowLeftRight, Upload, Sparkles, PartyPopper, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Zap, Volume2, VolumeX } from 'lucide-react'
-import { uploadVideo, startTask, fetchServerSettings } from '@/lib/api'
+import { ArrowLeftRight, Upload, Sparkles, PartyPopper, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Zap, Volume2, VolumeX, RefreshCcw } from 'lucide-react'
+import { uploadVideo, startTask, fetchServerSettings, fetchGeminiModels } from '@/lib/api'
 import { saveActiveTaskId } from '@/lib/task-session'
 import {
   loadSettings,
@@ -17,7 +17,9 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -47,6 +49,8 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const [refreshingModels, setRefreshingModels] = useState(false)
+
   useEffect(() => {
     function syncSettings() {
       setSettings(loadSettings())
@@ -67,6 +71,48 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
       window.removeEventListener('storage', syncSettings)
     }
   }, [])
+
+  // 自动根据配置的 API Key 和 Base URL 拉取最新可用 AI 模型列表
+  useEffect(() => {
+    if (settings.geminiApiKey && (!settings.customGeminiModels || settings.customGeminiModels.length === 0)) {
+      fetchGeminiModels(settings.geminiApiKey, settings.geminiApiUrl, settings.geminiApiFormat)
+        .then((models) => {
+          if (models && models.length > 0) {
+            const formatted = models.map((m) => ({ id: m.id, name: m.name }))
+            const updated: AppSettings = {
+              ...settings,
+              customGeminiModels: formatted,
+              geminiModel: formatted.some(f => f.id === settings.geminiModel) ? settings.geminiModel : formatted[0].id,
+            }
+            setSettings(updated)
+            saveSettings(updated)
+          }
+        })
+        .catch(() => { /* 自动无感重试，忽略错 */ })
+    }
+  }, [settings.geminiApiKey, settings.geminiApiUrl, settings.geminiApiFormat])
+
+  async function handleRefreshModels() {
+    if (!settings.geminiApiKey) return
+    setRefreshingModels(true)
+    try {
+      const models = await fetchGeminiModels(settings.geminiApiKey, settings.geminiApiUrl, settings.geminiApiFormat)
+      if (models && models.length > 0) {
+        const formatted = models.map((m) => ({ id: m.id, name: m.name }))
+        const updated: AppSettings = {
+          ...settings,
+          customGeminiModels: formatted,
+          geminiModel: formatted.some(f => f.id === settings.geminiModel) ? settings.geminiModel : formatted[0].id,
+        }
+        setSettings(updated)
+        saveSettings(updated)
+      }
+    } catch {
+      /* 静默 */
+    } finally {
+      setRefreshingModels(false)
+    }
+  }
 
   function getTimestamp() {
     const now = new Date()
@@ -613,6 +659,17 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                 <div className="flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                   <span className="text-slate-400 dark:text-slate-500 shrink-0 select-none">引擎:</span>
+                  {settings.geminiApiKey && (
+                    <button
+                      type="button"
+                      onClick={handleRefreshModels}
+                      disabled={refreshingModels}
+                      title="从 API 接口重新在线刷新可用 AI 模型"
+                      className="p-0.5 hover:bg-slate-200/60 dark:hover:bg-slate-800 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-50"
+                    >
+                      <RefreshCcw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} />
+                    </button>
+                  )}
                   <Select
                     value={settings.geminiModel || 'gemini-2.0-flash'}
                     onValueChange={(val) => {
@@ -622,22 +679,26 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                       saveSettings(updated)
                     }}
                   >
-                    <SelectTrigger className="h-6 px-1.5 text-[11px] font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 border-0 rounded-md cursor-pointer transition-colors">
-                      <SelectValue>{getGeminiModelDisplayName(settings.geminiModel)}</SelectValue>
+                    <SelectTrigger className="h-6 px-1.5 text-[11px] font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 border-0 rounded-md cursor-pointer transition-colors max-w-[220px]">
+                      <SelectValue>{getGeminiModelDisplayName(settings.geminiModel, settings.customGeminiModels)}</SelectValue>
                     </SelectTrigger>
-                    <SelectContent className="min-w-[280px] max-w-[340px] max-h-[320px] bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xl overflow-y-auto">
-                      {Array.from(
-                        new Map(
-                          (settings.customGeminiModels && settings.customGeminiModels.length > 0
-                            ? [...DEFAULT_GEMINI_MODELS, ...settings.customGeminiModels]
-                            : DEFAULT_GEMINI_MODELS
-                          ).map((m) => [m.id, m])
-                        ).values()
-                      ).map((m) => (
-                        <SelectItem key={m.id} value={m.id} className="text-xs cursor-pointer py-2 pr-4">
-                          {m.name}
-                        </SelectItem>
-                      ))}
+                    <SelectContent className="min-w-[280px] max-w-[360px] max-h-[320px] bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xl overflow-y-auto">
+                      {settings.customGeminiModels && settings.customGeminiModels.length > 0 ? (
+                        <SelectGroup>
+                          <SelectLabel className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold px-2 py-1">
+                            ✨ API 动态拉取模型 ({settings.customGeminiModels.length})
+                          </SelectLabel>
+                          {settings.customGeminiModels.map((m) => (
+                            <SelectItem key={m.id} value={m.id} className="text-xs cursor-pointer py-1.5 pr-4">
+                              {m.name || m.id}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ) : (
+                        <div className="p-3 text-center text-xs text-slate-400 dark:text-slate-500">
+                          {settings.geminiApiKey ? '正在/请点击刷新按钮拉取 API 模型...' : '请先在【偏好设置】配置 API Key'}
+                        </div>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>

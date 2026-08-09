@@ -109,7 +109,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
     }
   }, [])
 
-  const currentModelDisplayName = getGeminiModelDisplayName(settings.geminiModel)
+  const currentModelDisplayName = getGeminiModelDisplayName(settings.geminiModel, settings.customGeminiModels)
 
   // 当前步骤视图（用户可切换步骤或启用自动跟随）
   const [activeStep, setActiveStep] = useState<ProcessingStepIndex>(1)

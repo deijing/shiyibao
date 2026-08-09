@@ -171,8 +171,12 @@ export const DEFAULT_GEMINI_MODELS = [
   { id: 'deepseek-r1', name: 'DeepSeek R1 / V4 (深度推理)' },
 ]
 
-export function getGeminiModelDisplayName(modelId?: string): string {
+export function getGeminiModelDisplayName(modelId?: string, customModels?: { id: string; name: string }[]): string {
   if (!modelId) return 'Gemini 3.6 Flash'
+  if (customModels && customModels.length > 0) {
+    const found = customModels.find(m => m.id === modelId)
+    if (found) return found.name || found.id
+  }
   if (modelId === 'gemini-3.1-pro') return 'Gemini 3.1 Pro'
   if (modelId === 'gemini-3.6-flash') return 'Gemini 3.6 Flash'
   if (modelId === 'gemini-2.5-pro') return 'Gemini 2.5 Pro'
@@ -341,6 +345,28 @@ export default function SettingsPanel() {
       }
     })
   }, [])
+
+  // 自动从用户配置的 API Key 与 Base URL 接口在线拉取可用模型
+  useEffect(() => {
+    if (settings.geminiApiKey && (!settings.customGeminiModels || settings.customGeminiModels.length === 0)) {
+      fetchGeminiModels(settings.geminiApiKey, settings.geminiApiUrl, settings.geminiApiFormat)
+        .then((models) => {
+          if (models && models.length > 0) {
+            const formatted = models.map((m) => ({ id: m.id, name: m.name }))
+            setSettings((s) => {
+              const updated = {
+                ...s,
+                customGeminiModels: formatted,
+                geminiModel: formatted.some(f => f.id === s.geminiModel) ? s.geminiModel : (s.geminiModel || formatted[0].id),
+              }
+              saveSettings(updated)
+              return updated
+            })
+          }
+        })
+        .catch(() => { /* 忽略自动拉取失败 */ })
+    }
+  }, [settings.geminiApiKey, settings.geminiApiUrl, settings.geminiApiFormat])
 
 
 
@@ -826,23 +852,24 @@ export default function SettingsPanel() {
                     onValueChange={(val) => setSettings(s => ({ ...s, geminiModel: val || 'gemini-2.0-flash' }))}
                   >
                     <SelectTrigger id="gemini-model-select" className="w-full h-10 bg-slate-100/70 dark:bg-slate-800/80 border-0 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-slate-400/30">
-                      <SelectValue placeholder="选择 Gemini 翻译模型" />
+                      <SelectValue>{getGeminiModelDisplayName(settings.geminiModel, settings.customGeminiModels)}</SelectValue>
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-h-[300px] overflow-y-auto">
                       {settings.customGeminiModels && settings.customGeminiModels.length > 0 ? (
                         <SelectGroup>
-                          <SelectLabel>已在线拉取的 Gemini 模型</SelectLabel>
+                          <SelectLabel className="text-emerald-600 dark:text-emerald-400 font-semibold text-[11px] px-2 py-1">
+                            ✨ API 接口动态模型 ({settings.customGeminiModels.length})
+                          </SelectLabel>
                           {settings.customGeminiModels.map(m => (
-                            <SelectItem key={m.id} value={m.id}>{m.name || m.id}</SelectItem>
+                            <SelectItem key={m.id} value={m.id} className="text-xs cursor-pointer py-1.5">
+                              {m.name || m.id}
+                            </SelectItem>
                           ))}
                         </SelectGroup>
                       ) : (
-                        <SelectGroup>
-                          <SelectLabel>预设 Gemini 模型</SelectLabel>
-                          {DEFAULT_GEMINI_MODELS.map(m => (
-                            <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
-                          ))}
-                        </SelectGroup>
+                        <div className="p-3 text-center text-xs text-slate-400 dark:text-slate-500">
+                          暂无可用模型，请先输入 API Key 并点击“测试连接与拉取模型”
+                        </div>
                       )}
                     </SelectContent>
                   </Select>

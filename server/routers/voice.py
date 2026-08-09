@@ -148,12 +148,17 @@ async def get_gemini_models(req: KeyTestRequest):
                 resp = await client.get(url)
                 if resp.status_code == 200:
                     data = resp.json()
-                    raw_models = data.get("data", [])
+                    raw_models = data.get("data", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
                     valid_models = []
                     for m in raw_models:
-                        m_id = m.get("id", "")
-                        if any(k in m_id.lower() for k in ("gpt", "claude", "gemini", "qwen", "deepseek", "moonshot", "doubao", "ep-", "llama", "chat", "v1", "reasoner")):
-                            valid_models.append({"id": m_id, "name": m_id, "description": "OpenAI 兼容模型"})
+                        m_id = (m.get("id", "") if isinstance(m, dict) else str(m)).strip()
+                        if not m_id:
+                            continue
+                        m_id_lower = m_id.lower()
+                        # Exclude non-chat/generation models (embedding, audio, moderation, image)
+                        if any(ex in m_id_lower for ex in ("embed", "whisper", "tts", "dall-e", "rerank", "moderation", "bge", "realtime", "transcription")):
+                            continue
+                        valid_models.append({"id": m_id, "name": m_id, "description": "OpenAI 动态模型"})
                     valid_models.sort(key=lambda x: x["id"])
                     if not valid_models:
                         valid_models = [
@@ -167,6 +172,26 @@ async def get_gemini_models(req: KeyTestRequest):
                 raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}")
 
     elif fmt == "Anthropic":
+        default_base = "https://api.anthropic.com"
+        root_url = clean_base if clean_base else default_base
+        url = f"{root_url}/models" if root_url.endswith("/v1") else f"{root_url}/v1/models"
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
+        async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+            try:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw_models = data.get("data", []) if isinstance(data, dict) else []
+                    valid_models = []
+                    for m in raw_models:
+                        m_id = (m.get("id", "") if isinstance(m, dict) else str(m)).strip()
+                        if m_id:
+                            display_name = m.get("display_name", m_id) if isinstance(m, dict) else m_id
+                            valid_models.append({"id": m_id, "name": display_name, "description": "Anthropic Claude 模型"})
+                    if valid_models:
+                        return {"models": valid_models}
+            except Exception:
+                pass
         return {
             "models": [
                 {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet (推荐)", "description": "Anthropic 旗舰推理模型"},
@@ -190,7 +215,7 @@ async def get_gemini_models(req: KeyTestRequest):
                     for m in raw_models:
                         methods = m.get("supportedGenerationMethods", [])
                         name = m.get("name", "")
-                        if "generateContent" in methods and "gemini" in name.lower():
+                        if ("generateContent" in methods or not methods) and name:
                             clean_id = name.replace("models/", "")
                             display_name = m.get("displayName", clean_id)
                             desc = m.get("description", "")
@@ -200,7 +225,10 @@ async def get_gemini_models(req: KeyTestRequest):
                                 "description": desc,
                             })
                     valid_models.sort(key=lambda x: x["id"], reverse=True)
-                    return {"models": valid_models}
+                    if valid_models:
+                        return {"models": valid_models}
+                    else:
+                        raise HTTPException(status_code=400, detail="未找到有效 Gemini 模型")
                 else:
                     detail = f"状态码 {resp.status_code}"
                     try:
