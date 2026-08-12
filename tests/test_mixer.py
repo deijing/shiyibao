@@ -54,6 +54,43 @@ def test_merge_burns_ass_subtitles_and_uses_gpu_encode(monkeypatch, tmp_path) ->
     assert "libx264" not in filter_args
 
 
+def test_merge_pads_to_video_duration_when_source_has_audio(monkeypatch, tmp_path) -> None:
+    captured: dict = {}
+
+    async def fake_run_ffmpeg_video_encode(**kwargs):
+        captured.update(kwargs)
+        return VideoEncoderBackend(
+            id="libx264",
+            encoder="libx264",
+            label="CPU",
+            is_hardware=False,
+            hwaccel=None,
+        )
+
+    async def fake_probe(_path):
+        return 12.5
+
+    async def fake_has_audio(_path):
+        return True
+
+    monkeypatch.setattr(mixer, "get_subtitle_burn_filter", lambda: None)
+    monkeypatch.setattr(mixer, "run_ffmpeg_video_encode", fake_run_ffmpeg_video_encode)
+    monkeypatch.setattr(mixer, "probe_duration", fake_probe)
+    monkeypatch.setattr(mixer, "has_audio_stream", fake_has_audio)
+    asyncio.run(mixer.merge(
+        tmp_path,
+        tmp_path / "input.mp4",
+        [{"start": 0, "end": 1, "translated_text": "你好"}],
+        original_volume=0.0,
+    ))
+
+    filter_complex = captured["filter_args"][captured["filter_args"].index("-filter_complex") + 1]
+    assert "apad=whole_dur=12.500" in filter_complex
+    assert "-t" in captured["extra_output_args"]
+    assert "12.500" in captured["extra_output_args"]
+    assert "-shortest" not in captured["extra_output_args"]
+
+
 def test_merge_chunk_uses_fast_gpu_profile(monkeypatch, tmp_path) -> None:
     captured: dict = {}
 

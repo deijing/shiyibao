@@ -43,6 +43,35 @@ function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(apiUrl(path), { ...init, headers })
 }
 
+function formatApiDetail(detail: unknown, fallback: string): string {
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (typeof item === 'string') return item
+        if (item && typeof item === 'object' && 'msg' in item) {
+          return String((item as { msg: unknown }).msg)
+        }
+        return ''
+      })
+      .filter(Boolean)
+    if (parts.length) return parts.join('; ')
+  }
+  return fallback
+}
+
+async function readApiError(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json()
+    const fromDetail = formatApiDetail(data?.detail, '')
+    if (fromDetail) return fromDetail
+    if (typeof data?.message === 'string' && data.message.trim()) return data.message
+  } catch {
+    /* 响应体不是 JSON */
+  }
+  return res.statusText || fallback
+}
+
 export interface UploadResponse {
   task_id: string
   filename: string
@@ -127,7 +156,10 @@ export interface TaskListItem {
   error: string | null
   created_at?: string
   target_lang?: string
+  source_lang?: string
   voice?: string
+  stream_mode?: 'streaming' | 'batch'
+  original_audio_volume?: number
 }
 
 export interface PerformanceSettings {
@@ -198,7 +230,7 @@ export async function uploadVideo(file: File): Promise<UploadResponse> {
   const formData = new FormData()
   formData.append('file', file)
   const res = await apiFetch('/api/upload', { method: 'POST', body: formData })
-  if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`)
+  if (!res.ok) throw new Error(await readApiError(res, '上传失败'))
   return res.json()
 }
 
@@ -207,18 +239,18 @@ export async function startTask(taskId: string, config: TaskStartConfig): Promis
     method: 'POST',
     body: JSON.stringify(config),
   })
-  if (!res.ok) throw new Error(`Start failed: ${res.statusText}`)
+  if (!res.ok) throw new Error(await readApiError(res, '启动任务失败'))
 }
 
 export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
   const res = await apiFetch(`/api/task/${taskId}/status`)
-  if (!res.ok) throw new Error(`Status check failed: ${res.statusText}`)
+  if (!res.ok) throw new Error(await readApiError(res, '获取任务状态失败'))
   return normalizeTaskStatus(await res.json())
 }
 
 export async function getSubtitles(taskId: string): Promise<SubtitleSegment[]> {
   const res = await apiFetch(`/api/task/${taskId}/subtitles`)
-  if (!res.ok) throw new Error(`Subtitles fetch failed: ${res.statusText}`)
+  if (!res.ok) throw new Error(await readApiError(res, '获取字幕失败'))
   return res.json()
 }
 
@@ -240,13 +272,13 @@ export function getThumbnailUrl(taskId: string): string {
 
 export async function getTaskList(): Promise<TaskListItem[]> {
   const res = await apiFetch('/api/tasks')
-  if (!res.ok) throw new Error(`Task list failed: ${res.statusText}`)
+  if (!res.ok) throw new Error(await readApiError(res, '获取任务列表失败'))
   return res.json()
 }
 
 export async function getPerformanceSettings(): Promise<PerformanceResponse> {
   const res = await apiFetch('/api/performance')
-  if (!res.ok) throw new Error(`Performance settings failed: ${res.statusText}`)
+  if (!res.ok) throw new Error(await readApiError(res, '获取性能设置失败'))
   return res.json()
 }
 
@@ -257,13 +289,13 @@ export async function updatePerformanceSettings(
     method: 'PUT',
     body: JSON.stringify(settings),
   })
-  if (!res.ok) throw new Error(`Performance update failed: ${res.statusText}`)
+  if (!res.ok) throw new Error(await readApiError(res, '更新性能设置失败'))
   return res.json()
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
   const res = await apiFetch(`/api/task/${taskId}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error(`Task delete failed: ${res.statusText}`)
+  if (!res.ok) throw new Error(await readApiError(res, '删除任务失败'))
 }
 
 export async function getTaskLogs(taskId: string): Promise<TaskLogItem[]> {
@@ -276,9 +308,15 @@ export function getVoicePreviewUrl(voiceName: string): string {
   return apiUrl(`/api/voice/preview/${encodeURIComponent(voiceName)}`)
 }
 
+export async function fetchVoicePreview(voiceName: string): Promise<Blob> {
+  const res = await apiFetch(`/api/voice/preview/${encodeURIComponent(voiceName)}`)
+  if (!res.ok) throw new Error(await readApiError(res, '音色试听失败'))
+  return res.blob()
+}
+
 export async function getRuntimeHealth(): Promise<RuntimeHealth> {
   const res = await apiFetch('/api/health')
-  if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`)
+  if (!res.ok) throw new Error(await readApiError(res, '健康检查失败'))
   return res.json()
 }
 
@@ -299,9 +337,9 @@ export async function fetchGeminiModels(
       api_format: (apiFormat || 'Gemini').trim(),
     }),
   })
-  const data = await res.json()
+  const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(data.detail || '获取模型列表失败')
+    throw new Error(formatApiDetail(data.detail, '获取模型列表失败'))
   }
   return data.models || []
 }
@@ -315,29 +353,19 @@ export async function testGeminiKey(
     throw new Error('API Key 不能为空，请先输入密钥')
   }
 
-  try {
-    const res = await apiFetch('/api/test/gemini', {
-      method: 'POST',
-      body: JSON.stringify({
-        api_key: apiKey.trim(),
-        api_url: (apiUrl || '').trim(),
-        api_format: (apiFormat || 'Gemini').trim(),
-      }),
-    })
-    const data = await res.json()
-    if (!res.ok) {
-      throw new Error(data.detail || 'API Key 验证未通过')
-    }
-    return { success: true, message: data.message || 'API Key 校验成功！' }
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('不能为空')) {
-      throw err
-    }
-    if (apiKey.trim().length >= 8) {
-      return { success: true, message: 'API Key 结构校验成功！服务通道正常。' }
-    }
-    throw err instanceof Error ? err : new Error('API Key 校验失败，请检查密钥与网络通道是否有效')
+  const res = await apiFetch('/api/test/gemini', {
+    method: 'POST',
+    body: JSON.stringify({
+      api_key: apiKey.trim(),
+      api_url: (apiUrl || '').trim(),
+      api_format: (apiFormat || 'Gemini').trim(),
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(formatApiDetail(data.detail, 'API Key 验证未通过'))
   }
+  return { success: true, message: data.message || 'API Key 校验成功！' }
 }
 
 export async function testXiaomiKey(apiKey: string): Promise<{ success: boolean; message: string }> {
@@ -345,25 +373,15 @@ export async function testXiaomiKey(apiKey: string): Promise<{ success: boolean;
     throw new Error('小米 TTS Key 不能为空，请先输入密钥')
   }
 
-  try {
-    const res = await apiFetch('/api/test/xiaomi', {
-      method: 'POST',
-      body: JSON.stringify({ api_key: apiKey.trim() }),
-    })
-    const data = await res.json()
-    if (!res.ok) {
-      throw new Error(data.detail || '小米 TTS Key 验证未通过')
-    }
-    return { success: true, message: data.message || '小米 TTS Key 校验成功！' }
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('不能为空')) {
-      throw err
-    }
-    if (apiKey.trim().length >= 4) {
-      return { success: true, message: '小米 TTS Key 结构校验成功！语音引擎正常。' }
-    }
-    throw err instanceof Error ? err : new Error('小米 TTS Key 校验失败，请检查密钥是否有效')
+  const res = await apiFetch('/api/test/xiaomi', {
+    method: 'POST',
+    body: JSON.stringify({ api_key: apiKey.trim() }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(formatApiDetail(data.detail, '小米 TTS Key 验证未通过'))
   }
+  return { success: true, message: data.message || '小米 TTS Key 校验成功！' }
 }
 
 export async function fetchServerSettings(): Promise<Record<string, any>> {
@@ -413,7 +431,7 @@ export async function scanDirectory(inputDir: string): Promise<ScanDirectoryResp
   })
   const data = await res.json()
   if (!res.ok) {
-    throw new Error(data.detail || '扫描输入文件夹失败')
+    throw new Error(formatApiDetail(data.detail, '扫描输入文件夹失败'))
   }
   return data
 }
@@ -430,7 +448,7 @@ export async function registerLocalTask(
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(data.detail || '注册本地视频任务失败')
+    throw new Error(formatApiDetail(data.detail, '注册本地视频任务失败'))
   }
   return data
 }
@@ -457,7 +475,7 @@ export interface EnvCheckResult {
 export async function checkEnvironment(): Promise<EnvCheckResult> {
   const res = await apiFetch('/api/environment/check')
   if (!res.ok) {
-    throw new Error('环境检测服务连通失败')
+    throw new Error(await readApiError(res, '环境检测服务连通失败'))
   }
   return await res.json()
 }
@@ -488,7 +506,7 @@ export async function analyzeSubtitlesAI(
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(data.detail || 'AI 分析调用失败')
+    throw new Error(formatApiDetail(data.detail, 'AI 分析调用失败'))
   }
   return data
 }

@@ -84,8 +84,27 @@ class AdaptiveRateLimiter:
             return self.current_delay
 
 
+_JSON_ARRAY_KEYS = ("translations", "result", "data", "items", "segments")
+
+
+def _unwrap_json_array(parsed: object) -> list | None:
+    """把模型常见的对象包裹（如 {"translations": [...]}）还原成数组。"""
+    if isinstance(parsed, list):
+        return parsed
+    if not isinstance(parsed, dict):
+        return None
+    for key in _JSON_ARRAY_KEYS:
+        value = parsed.get(key)
+        if isinstance(value, list):
+            return value
+    for value in parsed.values():
+        if isinstance(value, list):
+            return value
+    return None
+
+
 def _extract_json_array(text: str) -> list:
-    """从模型响应中解析 JSON 数组，并兼容代码围栏。"""
+    """从模型响应中解析 JSON 数组，并兼容代码围栏与对象包裹。"""
     s = text.strip()
     if s.startswith("```"):
         s = s[3:]
@@ -93,13 +112,36 @@ def _extract_json_array(text: str) -> list:
         if first.strip().lower() in ("json", ""):
             s = rest
         s = s.rsplit("```", 1)[0].strip()
+    parsed: object | None = None
     try:
-        return json.loads(s)
+        parsed = json.loads(s)
     except json.JSONDecodeError:
         start, end = s.find("["), s.rfind("]")
         if start != -1 and end > start:
-            return json.loads(s[start:end + 1])
-        raise
+            parsed = json.loads(s[start:end + 1])
+        else:
+            raise
+    unwrapped = _unwrap_json_array(parsed)
+    if unwrapped is not None:
+        return unwrapped
+    raise json.JSONDecodeError("AI 响应不是 JSON 数组", s, 0)
+
+
+def _segments_needing_translation(segments: list[dict], skip_translated: bool) -> list[dict]:
+    """选出仍需请求翻译 API 的分段。
+
+    续传时保留已成功翻译的句子，但 ``translated_fallback``（上次失败后回退原文）
+    必须重新翻译，否则失败句会被永久跳过。
+    """
+    if not skip_translated:
+        return list(segments)
+    pending: list[dict] = []
+    for seg in segments:
+        has_text = bool(str(seg.get("translated_text", "")).strip())
+        if has_text and not seg.get("translated_fallback"):
+            continue
+        pending.append(seg)
+    return pending
 
 
 def pick_api_key(raw_key: str, index: int = 0) -> str:
@@ -299,11 +341,16 @@ async def translate_subtitles(
     target_lang_name = LANG_NAMES.get(target_lang, "Chinese")
     source_lang_name = LANG_NAMES.get(source_lang, None) if source_lang and source_lang != "auto" else None
 
+    json_shape_hint = (
+        'Return ONLY a JSON array of translated strings, or a JSON object '
+        '{"translations": [...]} with one string per input segment. '
+        "Preserve the exact item count and order. "
+    )
     if source_lang_name:
         system_prompt = (
             "You are a professional subtitle translator. Translate the following "
-            f"subtitle segments from {source_lang_name} to {target_lang_name}. Return ONLY a JSON array of translated "
-            "strings, one per input segment. Preserve the exact item count and order. "
+            f"subtitle segments from {source_lang_name} to {target_lang_name}. "
+            f"{json_shape_hint}"
             "Use natural target-language punctuation for speech: finish complete thoughts "
             "with sentence-ending punctuation, but leave a comma after a fragment that "
             "clearly continues into the next item. Never add line breaks inside an item."
@@ -311,8 +358,8 @@ async def translate_subtitles(
     else:
         system_prompt = (
             "You are a professional subtitle translator. Translate the following "
-            f"subtitle segments to {target_lang_name}. Return ONLY a JSON array of translated "
-            "strings, one per input segment. Preserve the exact item count and order. "
+            f"subtitle segments to {target_lang_name}. "
+            f"{json_shape_hint}"
             "Use natural target-language punctuation for speech: finish complete thoughts "
             "with sentence-ending punctuation, but leave a comma after a fragment that "
             "clearly continues into the next item. Never add line breaks inside an item."
@@ -322,10 +369,7 @@ async def translate_subtitles(
     batch_size = performance.translate_batch_size
     adaptive_limiter = AdaptiveRateLimiter()
 
-    pending = [
-        seg for seg in segments
-        if not (skip_translated and str(seg.get("translated_text", "")).strip())
-    ]
+    pending = _segments_needing_translation(segments, skip_translated)
     batches = [
         (batch_start, pending[batch_start:batch_start + batch_size])
         for batch_start in range(0, len(pending), batch_size)

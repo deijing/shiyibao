@@ -28,25 +28,34 @@ function TaskPage() {
       return
     }
 
+    let cancelled = false
     setLoading(true)
     getTaskStatus(taskId)
       .then((st) => {
+        if (cancelled) return
         setStatus(st)
         if (st.stage === 'complete') {
           setStage('result')
-          clearActiveTaskId()
+          if (loadActiveTaskId() === taskId) clearActiveTaskId()
+        } else if (st.stage === 'error') {
+          setStage('processing')
+          if (loadActiveTaskId() === taskId) clearActiveTaskId()
         } else {
           setStage('processing')
           saveActiveTaskId(taskId)
         }
       })
       .catch(() => {
-        clearActiveTaskId()
+        if (cancelled) return
+        if (loadActiveTaskId() === taskId) clearActiveTaskId()
         navigate('/', { replace: true })
       })
       .finally(() => {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       })
+    return () => {
+      cancelled = true
+    }
   }, [taskId, navigate])
 
   if (loading) {
@@ -67,7 +76,7 @@ function TaskPage() {
       <ResultState
         taskId={taskId}
         onReset={() => {
-          clearActiveTaskId()
+          if (loadActiveTaskId() === taskId) clearActiveTaskId()
           navigate('/')
         }}
       />
@@ -78,7 +87,7 @@ function TaskPage() {
     <ProcessingState
       taskId={taskId}
       onComplete={() => {
-        clearActiveTaskId()
+        if (loadActiveTaskId() === taskId) clearActiveTaskId()
         setStage('result')
       }}
       onNavigateToHistory={() => navigate('/history')}
@@ -140,19 +149,15 @@ export default function App() {
   }, [])
 
   const handleOpenTask = useCallback((id: string) => {
-    saveActiveTaskId(id)
     getTaskStatus(id)
       .then((st) => {
         if (st.stage !== 'complete' && st.stage !== 'error') {
+          saveActiveTaskId(id)
           setActiveProcessingTaskId(id)
-        } else {
-          clearActiveTaskId()
-          setActiveProcessingTaskId(null)
         }
       })
       .catch(() => {
-        clearActiveTaskId()
-        setActiveProcessingTaskId(null)
+        /* 打开失败时保留当前后台任务徽章 */
       })
     navigate(`/task/${id}`)
   }, [navigate])

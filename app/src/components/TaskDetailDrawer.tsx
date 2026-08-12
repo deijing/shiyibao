@@ -6,7 +6,7 @@ import {
   AlertCircle
 } from 'lucide-react'
 import { getTaskStatus, getTaskLogs, getExportUrl, getSubtitles, startTask, getThumbnailUrl, type TaskStatus, type TaskLogItem } from '@/lib/api'
-import { loadSettings } from './SettingsPanel'
+import { loadSettings, buildTaskStartConfig } from './SettingsPanel'
 import { Button } from '@/components/ui/button'
 
 function TaskDetailVideoThumbnail({ taskId, alt }: { taskId: string; alt?: string }) {
@@ -200,13 +200,13 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
 
     setRetrying(true)
     try {
-      await startTask(taskId, {
-        gemini_api_key: settings.geminiApiKey,
-        mimo_api_key: settings.xiaomiTtsKey,
-        gemini_model: settings.geminiModel || 'gemini-2.0-flash',
-        voice: settings.mimoVoice || '冰糖',
-        target_lang: settings.targetLang || 'zh',
-      })
+      await startTask(taskId, buildTaskStartConfig(settings, {
+        voice: status?.voice,
+        source_lang: status?.source_lang,
+        target_lang: status?.target_lang,
+        stream_mode: status?.stream_mode,
+        original_audio_volume: status?.original_audio_volume,
+      }))
       setStatus((prev) => prev ? { ...prev, stage: 'pending', progress: 0, error: null } : null)
       setLogs((prev) => [
         ...prev,

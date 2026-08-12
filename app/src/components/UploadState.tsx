@@ -78,13 +78,15 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
         .then((models) => {
           if (models && models.length > 0) {
             const formatted = models.map((m) => ({ id: m.id, name: m.name }))
-            const updated: AppSettings = {
-              ...settings,
-              customGeminiModels: formatted,
-              geminiModel: formatted.some(f => f.id === settings.geminiModel) ? settings.geminiModel : formatted[0].id,
-            }
-            setSettings(updated)
-            saveSettings(updated)
+            setSettings((prev) => {
+              const updated: AppSettings = {
+                ...prev,
+                customGeminiModels: formatted,
+                geminiModel: formatted.some(f => f.id === prev.geminiModel) ? prev.geminiModel : formatted[0].id,
+              }
+              saveSettings(updated)
+              return updated
+            })
           }
         })
         .catch(() => { /* 自动无感重试，忽略错 */ })
@@ -137,7 +139,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
     if (!settings.geminiApiKey || !settings.xiaomiTtsKey) {
       const serverData = await fetchServerSettings()
       if (serverData && (serverData.geminiApiKey || serverData.xiaomiTtsKey)) {
-        settings = { ...settings, ...serverData }
+        settings = mergeFillEmpty(settings, serverData)
         saveSettings(settings)
       }
     }
@@ -245,6 +247,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (file) handleFile(file)
   }
 

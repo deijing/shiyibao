@@ -155,6 +155,7 @@ interface QualityOption {
 }
 
 function getExportQualityOptions(height: number | null): QualityOption[] {
+  // 后端目前只导出一份成片，不提供转码档位；选项仅用于展示原画分辨率。
   if (!height || height <= 0) {
     return [
       { id: 'original', label: '原画画质', shortLabel: '原画', isOriginal: true }
@@ -163,8 +164,7 @@ function getExportQualityOptions(height: number | null): QualityOption[] {
 
   const mainShort = getResolutionShortLabel(height)
   const mainFull = getResolutionFullLabel(height)
-
-  const options: QualityOption[] = [
+  return [
     {
       id: `res-${height}`,
       label: `${mainFull} (原画)`,
@@ -172,26 +172,6 @@ function getExportQualityOptions(height: number | null): QualityOption[] {
       isOriginal: true,
     }
   ]
-
-  const standardLevels = [
-    { minHeight: 1440, label: '2K 超清', shortLabel: '2K' },
-    { minHeight: 1080, label: '1080P Full HD', shortLabel: '1080P' },
-    { minHeight: 720, label: '720P 高清', shortLabel: '720P' },
-    { minHeight: 480, label: '480P 标清', shortLabel: '480P' },
-  ]
-
-  for (const level of standardLevels) {
-    if (height > level.minHeight) {
-      options.push({
-        id: `res-${level.minHeight}`,
-        label: level.label,
-        shortLabel: level.shortLabel,
-        isOriginal: false,
-      })
-    }
-  }
-
-  return options
 }
 
 interface SubtitleItemCardProps {
@@ -1118,6 +1098,11 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                       if (videoRef.current) videoRef.current.currentTime = num
                       lastVideoUpdate.current = now
                     }
+                  }}
+                  onValueCommitted={(val) => {
+                    const num = typeof val === 'number' ? val : Array.isArray(val) ? val[0] : 0
+                    setCurrentTime(num)
+                    if (videoRef.current) videoRef.current.currentTime = num
                   }}
                   className="w-full cursor-pointer relative flex items-center [&_[data-slot=slider-track]]:!h-1.5 [&_[data-slot=slider-track]]:!w-full [&_[data-slot=slider-track]]:bg-white/20 [&_[data-slot=slider-thumb]]:!w-3.5 [&_[data-slot=slider-thumb]]:!h-3.5 [&_[data-slot=slider-thumb]]:!border-none [&_[data-slot=slider-thumb]]:!bg-purple-500 [&_[data-slot=slider-thumb]]:shadow-[0_0_10px_rgba(168,85,247,0.8)]"
                 />

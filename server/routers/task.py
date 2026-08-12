@@ -178,6 +178,41 @@ def _find_video(task_id: str) -> Path:
     return video_path
 
 
+def _render_fingerprint(voice: str, target_lang: str, stream_mode: str, original_volume: float) -> dict:
+    return {
+        "voice": voice,
+        "target_lang": target_lang,
+        "stream_mode": stream_mode or "streaming",
+        "original_audio_volume": round(float(original_volume), 4),
+    }
+
+
+def _invalidate_render_cache(task_dir: Path) -> None:
+    """删除配音/成片缓存，避免换音色、音量或语言后复用旧画面。"""
+    for pattern in ("chunk_*.mp4", "dub_*.wav"):
+        for path in task_dir.glob(pattern):
+            path.unlink(missing_ok=True)
+    for name in ("dubbed_audio.wav", "final.mp4"):
+        path = task_dir / name
+        path.unlink(missing_ok=True)
+
+
+def _maybe_invalidate_render_cache(task_dir: Path, fingerprint: dict) -> bool:
+    """若渲染参数相对上次成片已变化，则清掉 chunk/final 缓存。"""
+    fp_path = task_dir / "render_fingerprint.json"
+    changed = False
+    if fp_path.exists():
+        try:
+            old = json.loads(fp_path.read_text(encoding="utf-8"))
+            changed = old != fingerprint
+        except (json.JSONDecodeError, OSError, TypeError):
+            changed = True
+    if changed:
+        _invalidate_render_cache(task_dir)
+    fp_path.write_text(json.dumps(fingerprint, ensure_ascii=False), encoding="utf-8")
+    return changed
+
+
 def _sanitize_folder_name(name: str) -> str:
     """清理文件名中的非法字符，生成安全的工程文件夹名称。"""
     cleaned = re.sub(r'[\\/:*?"<>|\r\n\t]', "_", str(name or "")).strip()
@@ -341,6 +376,21 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
         log_cb("系统", f"初始化转译引擎，解析输入视频文件: {video_path.name}")
         orig_vol = max(0.0, float(getattr(req, "original_audio_volume", 0.2)))
         _update_meta(task_id, stream_mode=req.stream_mode, original_audio_volume=orig_vol)
+        if _maybe_invalidate_render_cache(
+            task_dir,
+            _render_fingerprint(req.voice, req.target_lang, req.stream_mode, orig_vol),
+        ):
+            log_cb("视频合并", "检测到音色/音量/语言或渲染模式变更，已清除旧成片缓存", "info")
+            _update_meta(
+                task_id,
+                preview_ready=False,
+                preview_url=None,
+                preview_duration=0.0,
+                total_chunks=1,
+                completed_chunks=0,
+                chunks=[],
+                rendered_seconds=0.0,
+            )
 
         # 1. 音频提取阶段（断点续传检查）
         audio_path = task_dir / "audio.aac"
@@ -371,6 +421,11 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             log_cb("语音识别", "启动 BcutASR (必剪云端语音识别引擎) 提取语音段落...")
             segments = await asr.transcribe(task_dir, audio_path, log_cb=log_cb)
             log_cb("语音识别", f"语音识别完成，共提取 {len(segments)} 条有效台词分句", "success")
+
+        if not segments:
+            raise RuntimeError(
+                "语音识别未提取到有效台词。请确认视频含有人声，或检查必剪 ASR 服务是否可用。"
+            )
 
         source_lang = req.source_lang or "auto"
         if source_lang == "auto":
@@ -406,10 +461,16 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                         s for s in cached_target
                         if not str(s.get("translated_text", "")).strip() or s.get("translated_fallback", False)
                     ]
+                    segments = cached_target
                     if not untranslated:
-                        segments = cached_target
                         need_translate = False
                         log_cb("AI 翻译", f"⚡ 发现完整字幕翻译缓存 subtitles_{req.target_lang}.json，秒级跳过翻译", "success")
+                    else:
+                        log_cb(
+                            "AI 翻译",
+                            f"发现部分翻译缓存，将重试 {len(untranslated)}/{len(cached_target)} 条未完成字幕",
+                            "info",
+                        )
             except Exception:
                 pass
 
@@ -541,7 +602,11 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             _update_meta(task_id, stage=TaskStage.SYNTHESIZING.value, progress=85,
                          message="全片语音合成中")
             log_cb("音色合成", f"正在配置 MiMo 音色引擎 [{req.voice}] 补全全片配音合成...", "api")
-            await tts.synthesize_all(task_dir, segments, req.voice, mimo_api_key, log_cb=log_cb)
+            duration_total = await audio.probe_duration(video_path)
+            await tts.synthesize_all(
+                task_dir, segments, req.voice, mimo_api_key, log_cb=log_cb,
+                track_duration=duration_total if duration_total > 0 else None,
+            )
             log_cb("音色合成", "目标语言全片语音合成完成，音色与情感拟真度匹配正常", "success")
 
             _update_meta(task_id, stage=TaskStage.MIXING.value, progress=95,
@@ -611,7 +676,7 @@ def _task_finished(task_id: str, task: asyncio.Task) -> None:
 
 @router.post("/task/{task_id}/start", response_model=TaskStatusResponse)
 async def start_task(task_id: str, req: TaskStartRequest) -> TaskStatusResponse:
-    _read_meta(task_id)  # 任务不存在时返回 404
+    old_meta = _read_meta(task_id)  # 任务不存在时返回 404
     if not req.gemini_api_key.strip():
         raise HTTPException(status_code=400, detail="Gemini API Key 不能为空")
     if not (req.mimo_api_key.strip() or MIMO_API_KEY):
@@ -619,6 +684,35 @@ async def start_task(task_id: str, req: TaskStartRequest) -> TaskStatusResponse:
     active_task = _active_tasks.get(task_id)
     if active_task is not None and not active_task.done():
         raise HTTPException(status_code=409, detail="task is already running")
+
+    if old_meta.get("voice"):
+        try:
+            old_vol = float(old_meta.get("original_audio_volume", 0.2))
+        except (TypeError, ValueError):
+            old_vol = 0.2
+        old_fp = _render_fingerprint(
+            str(old_meta.get("voice") or ""),
+            str(old_meta.get("target_lang") or "zh"),
+            str(old_meta.get("stream_mode") or "streaming"),
+            old_vol,
+        )
+        new_fp = _render_fingerprint(
+            req.voice, req.target_lang, req.stream_mode or "streaming", req.original_audio_volume,
+        )
+        if old_fp != new_fp:
+            task_dir = _task_dir(task_id)
+            _invalidate_render_cache(task_dir)
+            (task_dir / "render_fingerprint.json").unlink(missing_ok=True)
+            _update_meta(
+                task_id,
+                preview_ready=False,
+                preview_url=None,
+                preview_duration=0.0,
+                total_chunks=1,
+                completed_chunks=0,
+                chunks=[],
+                rendered_seconds=0.0,
+            )
 
     _update_meta(task_id, stage=TaskStage.PENDING.value, progress=0,
                  message="已开始", error=None, source_lang=req.source_lang, target_lang=req.target_lang,

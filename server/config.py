@@ -126,5 +126,7 @@ def save_user_settings(settings: dict) -> dict:
     current = get_user_settings()
     current.update({k: v for k, v in settings.items() if v is not None})
     USER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    USER_SETTINGS_PATH.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = USER_SETTINGS_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(USER_SETTINGS_PATH)
     return current

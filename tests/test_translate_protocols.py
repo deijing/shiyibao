@@ -86,6 +86,34 @@ def test_build_ai_request_args_anthropic() -> None:
     assert extract_fn(mock_resp) == '["你好"]'
 
 
+def test_extract_json_array_plain_list() -> None:
+    from server.services.translate import _extract_json_array
+
+    assert _extract_json_array('["你好", "世界"]') == ["你好", "世界"]
+    assert _extract_json_array('```json\n["a"]\n```') == ["a"]
+
+
+def test_extract_json_array_unwraps_object_wrapper() -> None:
+    from server.services.translate import _extract_json_array
+
+    assert _extract_json_array('{"translations": ["你好", "世界"]}') == ["你好", "世界"]
+    assert _extract_json_array('{"result": ["ok"]}') == ["ok"]
+    assert _extract_json_array('```json\n{"translations": ["x"]}\n```') == ["x"]
+
+
+def test_segments_needing_translation_keeps_fallbacks() -> None:
+    from server.services.translate import _segments_needing_translation
+
+    segs = [
+        {"source_text": "a", "translated_text": "A", "translated_fallback": False},
+        {"source_text": "b", "translated_text": "b", "translated_fallback": True},
+        {"source_text": "c", "translated_text": ""},
+    ]
+    pending = _segments_needing_translation(segs, skip_translated=True)
+    assert [s["source_text"] for s in pending] == ["b", "c"]
+    assert _segments_needing_translation(segs, skip_translated=False) == segs
+
+
 def test_adaptive_rate_limiter() -> None:
     import asyncio
     from server.services.translate import AdaptiveRateLimiter

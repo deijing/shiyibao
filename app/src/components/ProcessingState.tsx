@@ -26,7 +26,7 @@ import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import TaskDetailDrawer from './TaskDetailDrawer'
 import TencentStreamPlayer from './TencentStreamPlayer'
-import { loadSettings, getGeminiModelDisplayName, getLanguageDisplayName, type AppSettings } from './SettingsPanel'
+import { loadSettings, getGeminiModelDisplayName, getLanguageDisplayName, buildTaskStartConfig, type AppSettings } from './SettingsPanel'
 
 interface ProcessingStateProps {
   taskId: string
@@ -38,7 +38,11 @@ type ProcessingStepIndex = 1 | 2 | 3
 
 const STAGE_ORDER = ['extracting_audio', 'transcribing', 'translating', 'synthesizing', 'mixing', 'complete'] as const
 
-function stageToStepNumber(stage: TaskStatus['stage']): ProcessingStepIndex {
+function stageToStepNumber(
+  stage: TaskStatus['stage'],
+  lastStep: ProcessingStepIndex = 1,
+): ProcessingStepIndex {
+  if (stage === 'error') return lastStep
   if (stage === 'extracting_audio' || stage === 'pending') return 1
   if (stage === 'transcribing' || stage === 'translating') return 2
   return 3
@@ -140,6 +144,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
   const logsContainerRef = useRef<HTMLDivElement | null>(null)
   // 字幕在进入合成/混音阶段后就不再变化，冻结后停止每轮重复拉取整段字幕。
   const subtitlesFrozenRef = useRef(false)
+  const lastStepRef = useRef<ProcessingStepIndex>(1)
 
   const [isRetrying, setIsRetrying] = useState(false)
 
@@ -148,18 +153,13 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
     setIsRetrying(true)
     setError(null)
     try {
-      const config = {
-        gemini_api_key: settings.geminiApiKey,
-        mimo_api_key: settings.xiaomiTtsKey,
-        gemini_model: settings.geminiModel,
-        gemini_api_url: settings.geminiApiUrl,
-        gemini_api_format: settings.geminiApiFormat,
-        voice: settings.mimoVoice,
+      const config = buildTaskStartConfig(settings, {
+        voice: status?.voice || settings.mimoVoice,
         source_lang: status?.source_lang || settings.sourceLang,
         target_lang: status?.target_lang || settings.targetLang,
-        stream_mode: (status?.stream_mode as 'streaming' | 'batch') || 'streaming',
+        stream_mode: status?.stream_mode || 'streaming',
         original_audio_volume: status?.original_audio_volume ?? settings.originalAudioVolume ?? 0.2,
-      }
+      })
       await startTask(taskId, config)
       await pollData()
       if (!intervalRef.current) {
@@ -190,7 +190,8 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
       if (!earlyStage) subtitlesFrozenRef.current = true
       setStatus(s)
 
-      const currentAutoStep = stageToStepNumber(s.stage)
+      const currentAutoStep = stageToStepNumber(s.stage, lastStepRef.current)
+      if (s.stage !== 'error') lastStepRef.current = currentAutoStep
       if (autoFollowRef.current) {
         setActiveStep(currentAutoStep)
       }
@@ -285,7 +286,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
     smoothProgress = Math.min(69, Math.max(50, 50 + Math.round(transRatio * 20)))
   }
 
-  const currentAutoStepIndex = status ? stageToStepNumber(status.stage) : 1
+  const currentAutoStepIndex = status ? stageToStepNumber(status.stage, lastStepRef.current) : 1
 
   // 筛选终端视图日志
   const filteredLogs = logs.filter((l) => {

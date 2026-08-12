@@ -6,7 +6,7 @@ import {
   AlertCircle, Terminal, Play, ListChecks, Check, Film
 } from 'lucide-react'
 import { getTaskList, deleteTask, startTask, getThumbnailUrl, type TaskListItem } from '@/lib/api'
-import { loadSettings, saveSettings } from './SettingsPanel'
+import { loadSettings, saveSettings, buildTaskStartConfig } from './SettingsPanel'
 import TaskDetailDrawer from './TaskDetailDrawer'
 import { Button } from '@/components/ui/button'
 import {
@@ -223,11 +223,14 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
     try {
       const settings = loadSettings()
       await startTask(task.task_id, {
+        ...buildTaskStartConfig(settings, {
+          voice: task.voice,
+          source_lang: task.source_lang,
+          target_lang: task.target_lang,
+          stream_mode: task.stream_mode,
+          original_audio_volume: task.original_audio_volume,
+        }),
         gemini_api_key: apiKey,
-        mimo_api_key: settings.xiaomiTtsKey,
-        gemini_model: settings.geminiModel || 'gemini-2.0-flash',
-        voice: task.voice || settings.mimoVoice || '冰糖',
-        target_lang: task.target_lang || settings.targetLang || 'zh',
       })
       // 本地乐观更新
       setTasks((prev) =>

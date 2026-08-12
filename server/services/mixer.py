@@ -192,8 +192,9 @@ async def merge(
     out_path = task_dir / "final.mp4"
     subtitle_path = write_ass_subtitles(task_dir, segments)
     has_audio = await has_audio_stream(video_path)
-    # 无片源音轨时需要明确静音时长，避免 anullsrc 无限延长。
-    pad_duration = None if has_audio else (await probe_duration(video_path) or None)
+    # 始终按视频时长补齐配音/原音，避免 -shortest 把成片截到最后一句台词。
+    video_duration = await probe_duration(video_path)
+    pad_duration = video_duration if video_duration > 0 else None
     filter_complex = _mix_filter_complex(
         duration=pad_duration,
         has_source_audio=has_audio,
@@ -201,6 +202,11 @@ async def merge(
     )
 
     vf_args = _build_vf_filter_args(subtitle_path)
+    extra_output_args = ["-movflags", "+faststart"]
+    if pad_duration is not None:
+        extra_output_args += ["-t", f"{pad_duration:.3f}"]
+    else:
+        extra_output_args.append("-shortest")
 
     # 字幕压制需要重新编码视频；优先 GPU，保持 yuv420p 兼容浏览器与常见播放器。
     await run_ffmpeg_video_encode(
@@ -216,8 +222,7 @@ async def merge(
         audio_args=["-c:a", "aac"],
         output_path=str(out_path),
         quality="high",
-        # 成片以视频长度为准；配音不足时已在滤镜中 apad。
-        extra_output_args=["-movflags", "+faststart", "-shortest"],
+        extra_output_args=extra_output_args,
     )
     return out_path
 

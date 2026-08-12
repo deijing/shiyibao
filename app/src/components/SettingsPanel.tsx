@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { testGeminiKey, testXiaomiKey, fetchGeminiModels, fetchServerSettings, saveServerSettings } from '@/lib/api'
+import { testGeminiKey, testXiaomiKey, fetchGeminiModels, fetchServerSettings, saveServerSettings, type TaskStartConfig } from '@/lib/api'
 
 const STORAGE_KEY = 'shiyibao-settings'
 
@@ -302,6 +302,31 @@ export function mergeFillEmpty(
     }
   }
   return merged as AppSettings
+}
+
+export function buildTaskStartConfig(
+  settings: AppSettings,
+  task?: {
+    voice?: string | null
+    source_lang?: string | null
+    target_lang?: string | null
+    stream_mode?: string | null
+    original_audio_volume?: number | null
+  },
+): TaskStartConfig {
+  const streamMode = task?.stream_mode || settings.streamMode || 'streaming'
+  return {
+    gemini_api_key: settings.geminiApiKey,
+    mimo_api_key: settings.xiaomiTtsKey,
+    gemini_model: settings.geminiModel || 'gemini-2.0-flash',
+    gemini_api_url: settings.geminiApiUrl || '',
+    gemini_api_format: settings.geminiApiFormat || 'Gemini',
+    voice: task?.voice || settings.mimoVoice || '冰糖',
+    source_lang: task?.source_lang || settings.sourceLang || 'auto',
+    target_lang: task?.target_lang || settings.targetLang || 'zh',
+    stream_mode: streamMode === 'batch' ? 'batch' : 'streaming',
+    original_audio_volume: task?.original_audio_volume ?? settings.originalAudioVolume ?? 0.2,
+  }
 }
 
 export default function SettingsPanel() {

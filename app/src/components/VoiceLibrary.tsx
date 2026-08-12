@@ -12,7 +12,7 @@ import {
   Search,
   CheckCircle2
 } from 'lucide-react'
-import { getVoicePreviewUrl } from '@/lib/api'
+import { fetchVoicePreview } from '@/lib/api'
 import { loadSettings, saveSettings, type AppSettings } from './SettingsPanel'
 import { Button } from '@/components/ui/button'
 
@@ -172,9 +172,7 @@ export default function VoiceLibrary({ onSelectVoice }: VoiceLibraryProps) {
     setErrorVoiceId(null)
     setGenerating(voiceId)
     try {
-      const res = await fetch(getVoicePreviewUrl(voiceId))
-      if (!res.ok) throw new Error(`preview failed: status ${res.status}`)
-      const blob = await res.blob()
+      const blob = await fetchVoicePreview(voiceId)
       const url = URL.createObjectURL(blob)
       blobUrlRef.current = url
       const audio = new Audio(url)

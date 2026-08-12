@@ -559,7 +559,7 @@ export default function BatchState() {
     if (!currentSettings.geminiApiKey || !currentSettings.xiaomiTtsKey) {
       const serverData = await fetchServerSettings()
       if (serverData && (serverData.geminiApiKey || serverData.xiaomiTtsKey)) {
-        currentSettings = { ...currentSettings, ...serverData }
+        currentSettings = mergeFillEmpty(currentSettings, serverData)
         saveSettings(currentSettings)
       }
     }
