@@ -12,14 +12,37 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.8'
+export const CURRENT_VERSION = 'v0.1.9'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
+  {
+    version: 'v0.1.9',
+    date: '2026-08-12',
+    title: '转译流水线、密钥校验与任务重试修复',
+    isLatest: true,
+    highlights: [
+      '修复 OpenAI / 兼容接口返回 JSON 对象时翻译整批失败的问题',
+      '部分翻译续传会保留成功句并重试失败句，换音色/音量/语言不再复用旧成片',
+      '批处理混流按视频时长对齐，避免原音静音或短配音把成片截断',
+      '设置页不再把无效 Key 显示为校验成功；历史与详情重试带上完整 API 配置',
+    ],
+    details: {
+      fixes: [
+        'OpenAI json_object 包裹的 translations 数组现在能正确解包',
+        'skip_translated 不再把 translated_fallback 原文当成已译而跳过',
+        '语音识别未提取到台词时明确报错，不再导出约 1 秒废片',
+        '渲染参数变化时清除 chunk / final 成片缓存',
+        '打开已完成任务不再清掉正在处理的后台任务徽章',
+        '上传失败后可重新选择同一文件；补齐服务端 Key 时不再覆盖本地模型/语言/音色',
+        '导出菜单仅保留原画选项，避免误导性的 720P/1080P 转码档位',
+        'API 错误改为展示 FastAPI detail；偏好设置改为原子写入',
+      ],
+    },
+  },
   {
     version: 'v0.1.8',
     date: '2026-08-09',
     title: '稳定性修复、轮询热点治理与长视频 TTS 混音性能优化',
-    isLatest: true,
     highlights: [
       '修复任务出错后点击「一键重试 / 从断点继续」界面不再刷新的问题，轮询可正确重新启动',
       '降低处理页与导航栏对同一任务状态的重复轮询，合成阶段后冻结字幕全量重拉，减少无效网络与渲染开销',
