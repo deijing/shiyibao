@@ -350,12 +350,31 @@ def _status(meta: dict) -> TaskStatusResponse:
 STREAM_CHUNK_SECONDS = 30.0
 
 
+def _relative_segments_for_window(
+    segments: list[dict], w_start: float, w_end: float
+) -> list[dict]:
+    """将「在本窗开始」的字幕片段映射到 0 基时间轴，每条字幕只进一个分片。"""
+    rel: list[dict] = []
+    for segment in segments:
+        start = float(segment.get("start", 0.0))
+        if start < w_start or start >= w_end:
+            continue
+        end = max(start + 0.05, float(segment.get("end", start + 0.05)))
+        rel.append({
+            **segment,
+            "start": max(0.0, start - w_start),
+            "end": max(0.0, min(end, w_end) - w_start),
+        })
+    return rel
+
+
 def _build_chunk_windows(
     segments: list[dict], total_duration: float, chunk_seconds: float
 ) -> list[tuple[float, float, list[dict]]]:
     """将 ``[0, total_duration]`` 切分为约 ``chunk_seconds`` 的连续时间窗。
-    每个语音分段仅分配到一个窗口；必要时会扩展窗口，避免分段跨越 chunk 边界
-    （否则会在句中截断配音）。"""
+
+    应传入 TTS utterance（已合并的配音句），而不是原始 ASR 短句：每个配音句只进
+    一个窗口；必要时会扩展窗口，避免一句配音跨越 chunk 边界后被念两遍。"""
     if total_duration <= 0.0:
         return []
     windows: list[tuple[float, float, list[dict]]] = []
@@ -526,7 +545,9 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             duration_total = await audio.probe_duration(video_path)
             if duration_total <= 0.0:
                 duration_total = float(segments[-1].get("end", 0.0)) + 2.0
-            windows = _build_chunk_windows(segments, duration_total, STREAM_CHUNK_SECONDS)
+            # 按配音句（而非 ASR 短句）切窗，避免合并后的一句话被两个分片各念一遍。
+            global_utterances = tts._build_tts_utterances(segments)
+            windows = _build_chunk_windows(global_utterances, duration_total, STREAM_CHUNK_SECONDS)
             total = len(windows)
             log_cb("流式渲染", f"⚡ 启用真·增量渲染：全片切分为 {total} 个约 {int(STREAM_CHUNK_SECONDS)} 秒时间窗，逐段边渲染边播放。", "info")
             _update_meta(task_id, stage=TaskStage.SYNTHESIZING.value,
@@ -535,17 +556,13 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
 
             manifest: list[dict] = []
             chunk_paths: list[Path] = []
-            for i, (w_start, w_end, w_segs) in enumerate(windows):
+            for i, (w_start, w_end, _w_utterances) in enumerate(windows):
                 chunk_path = task_dir / f"chunk_{i:03d}.mp4"
                 w_dur = max(0.1, w_end - w_start)
-                rel_segs = [
-                    {
-                        **s,
-                        "start": max(0.0, float(s.get("start", 0.0)) - w_start),
-                        "end": max(0.0, float(s.get("end", 0.0)) - w_start),
-                    }
-                    for s in w_segs
-                ]
+                rel_segs = _relative_segments_for_window(segments, w_start, w_end)
+                chunk_utterances = tts.slice_utterances_for_window(
+                    global_utterances, w_start, w_end,
+                )
 
                 # 检查该 chunk 是否已在先前的渲染中成功合成过
                 if chunk_path.exists() and chunk_path.stat().st_size > 1000:
@@ -555,6 +572,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                         task_dir, rel_segs, req.voice, mimo_api_key,
                         log_cb=log_cb, out_filename=f"dub_{i:03d}.wav",
                         track_duration=w_dur,
+                        utterances=chunk_utterances,
                     )
                     chunk_path = await mixer.merge_chunk(
                         task_dir, video_path, rel_segs, w_start, w_dur, i,

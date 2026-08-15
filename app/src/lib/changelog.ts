@@ -12,14 +12,30 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.9'
+export const CURRENT_VERSION = 'v0.1.10'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
+  {
+    version: 'v0.1.10',
+    date: '2026-08-15',
+    title: '修复成片配音把同一句话念两遍',
+    isLatest: true,
+    highlights: [
+      '流式分片改为按配音整句切窗，字幕仍只出现一次，配音不再在相邻分片里复读',
+      '重叠的 ASR 短句若文案已被当前语句覆盖，不再额外合成一遍配音',
+    ],
+    details: {
+      fixes: [
+        '分片窗口按 TTS utterance 扩展，避免合并后的一句话跨越 30 秒边界后被两个分片各念一遍',
+        '每个配音句只分配到它开始所在的时间窗，字幕片段同样按开始时间只进一个分片',
+        '时间重叠且文案重复/被包含的 ASR 片段会并入已有语句，而不是再配一次',
+      ],
+    },
+  },
   {
     version: 'v0.1.9',
     date: '2026-08-15',
     title: '粘贴视频链接一键翻译',
-    isLatest: true,
     highlights: [
       '首页支持粘贴 YouTube / B站 / 抖音等视频链接，一键下载并进入完整转译流水线',
       '新增下载阶段进度展示，失败可从断点跳过已缓存的源视频继续',

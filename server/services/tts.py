@@ -96,6 +96,32 @@ def _ends_utterance(text: str) -> bool:
     return stripped.endswith(SENTENCE_ENDINGS) or stripped.endswith(".")
 
 
+def _covers_tts_text(longer: str, shorter: str) -> bool:
+    """判断 shorter 是否已被 longer 覆盖，避免重叠 ASR 把同一句话再配一遍。"""
+    if not shorter:
+        return True
+    if shorter == longer:
+        return True
+    return shorter in longer
+
+
+def _absorb_redundant_fragment(
+    target: dict, text: str, end: float, source_index: int
+) -> bool:
+    """若新片段与已有语句时间重叠且文案重复/被包含，则并入 target 且不再另配。"""
+    current_text = str(target["translated_text"])
+    if _covers_tts_text(current_text, text):
+        target["end"] = max(float(target["end"]), end)
+        target["source_indices"].append(source_index)
+        return True
+    if _covers_tts_text(text, current_text):
+        target["translated_text"] = text
+        target["end"] = max(float(target["end"]), end)
+        target["source_indices"].append(source_index)
+        return True
+    return False
+
+
 def _build_tts_utterances(segments: list[dict]) -> list[dict]:
     """合并相邻 ASR 片段，使 TTS 接收到自然连贯的语句。"""
     utterances: list[dict] = []
@@ -113,8 +139,20 @@ def _build_tts_utterances(segments: list[dict]) -> list[dict]:
             continue
         start = float(segment.get("start", 0.0))
         end = max(start + MIN_SEGMENT_SECONDS, float(segment.get("end", start + 3.0)))
+        source_index = int(segment.get("index", len(utterances) if current is None else 0))
+
+        if current is None and utterances:
+            last = utterances[-1]
+            if start < float(last["end"]) and _absorb_redundant_fragment(last, text, end, source_index):
+                continue
 
         if current is not None:
+            if start < float(current["end"]) and _absorb_redundant_fragment(current, text, end, source_index):
+                duration = float(current["end"]) - float(current["start"])
+                if _ends_utterance(str(current["translated_text"])) or duration >= TARGET_UTTERANCE_SECONDS:
+                    flush()
+                continue
+
             gap = start - float(current["end"])
             combined_chars = len(str(current["translated_text"])) + 1 + len(text)
             combined_seconds = end - float(current["start"])
@@ -131,14 +169,14 @@ def _build_tts_utterances(segments: list[dict]) -> list[dict]:
                 "start": start,
                 "end": end,
                 "translated_text": text,
-                "source_indices": [int(segment.get("index", len(utterances)))],
+                "source_indices": [source_index],
             }
         else:
             previous = str(current["translated_text"])
             separator = "" if previous.endswith(("，", ",", "：", ":", "；", ";")) else "，"
             current["translated_text"] = f"{previous}{separator}{text}"
             current["end"] = end
-            current["source_indices"].append(int(segment.get("index", 0)))
+            current["source_indices"].append(source_index)
 
         duration = float(current["end"]) - float(current["start"])
         if _ends_utterance(text) or duration >= TARGET_UTTERANCE_SECONDS:
@@ -146,6 +184,30 @@ def _build_tts_utterances(segments: list[dict]) -> list[dict]:
 
     flush()
     return utterances
+
+
+def slice_utterances_for_window(
+    utterances: list[dict],
+    w_start: float,
+    w_end: float,
+) -> list[dict]:
+    """把全局 utterance 映射到时间窗的相对时间轴。
+
+    只纳入「在本窗内开始」的语句，避免跨窗把同一段配音再铺一遍。
+    分片窗口应按 utterance 扩展，使语句结束时间落在同一窗内。
+    """
+    sliced: list[dict] = []
+    for utterance in utterances:
+        u_start = float(utterance.get("start", 0.0))
+        u_end = float(utterance.get("end", u_start))
+        if u_start < w_start or u_start >= w_end:
+            continue
+        sliced.append({
+            **utterance,
+            "start": max(0.0, u_start - w_start),
+            "end": max(0.0, min(u_end, w_end) - w_start),
+        })
+    return sliced
 
 
 # 单条 ffmpeg 命令允许的最大音频输入数。片段更多时分批混音再汇总，
@@ -285,12 +347,14 @@ async def synthesize_all(
     log_cb: Callable[..., None] | None = None,
     out_filename: str = "dubbed_audio.wav",
     track_duration: float | None = None,
+    utterances: list[dict] | None = None,
 ) -> Path:
     """合成自然的翻译语句，再组装配音音轨。"""
     seg_dir = task_dir / "tts_segments"
     seg_dir.mkdir(parents=True, exist_ok=True)
 
-    utterances = _build_tts_utterances(segments)
+    if utterances is None:
+        utterances = _build_tts_utterances(segments)
     total_count = len(utterances)
     performance = get_performance_settings()
     async with httpx.AsyncClient(
