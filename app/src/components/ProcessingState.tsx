@@ -39,7 +39,7 @@ type ProcessingStepIndex = 1 | 2 | 3
 const STAGE_ORDER = ['extracting_audio', 'transcribing', 'translating', 'synthesizing', 'mixing', 'complete'] as const
 
 function stageToStepNumber(stage: TaskStatus['stage']): ProcessingStepIndex {
-  if (stage === 'extracting_audio' || stage === 'pending') return 1
+  if (stage === 'extracting_audio' || stage === 'pending' || stage === 'downloading') return 1
   if (stage === 'transcribing' || stage === 'translating') return 2
   return 3
 }
@@ -57,6 +57,7 @@ function stageToCardState(stage: TaskStatus['stage']) {
 function stageLabel(stage: TaskStatus['stage']): string {
   const labels: Record<string, string> = {
     pending: '初始化核心引擎...',
+    downloading: '步骤 1/3: 正在从链接下载视频...',
     extracting_audio: '步骤 1/3: 正在提取 PCM 音频轨...',
     transcribing: '步骤 2/3: 必剪 ASR 智能对白断句...',
     translating: '步骤 2/3: Gemini 大模型双语润色与翻译...',
@@ -178,6 +179,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
       // 早期阶段字幕仍在增长需持续拉取；进入合成/混音后拉取一次即冻结，避免长视频每 1.5s 重复搬运整段字幕。
       const earlyStage =
         s.stage === 'pending' ||
+        s.stage === 'downloading' ||
         s.stage === 'extracting_audio' ||
         s.stage === 'transcribing' ||
         s.stage === 'translating'
@@ -651,7 +653,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
                         音轨提取状态
                       </span>
                       <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                        {step1Done ? '100% Ready' : `${status?.stage === 'extracting_audio' ? status.progress : 0}%`}
+                        {step1Done ? '100% Ready' : `${status?.stage === 'extracting_audio' || status?.stage === 'downloading' ? status.progress : 0}%`}
                       </span>
                     </div>
                   </div>

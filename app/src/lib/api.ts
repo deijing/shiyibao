@@ -72,7 +72,7 @@ export interface GeminiModelItem {
 
 export interface TaskStatus {
   task_id: string
-  stage: 'pending' | 'extracting_audio' | 'transcribing' | 'translating' | 'synthesizing' | 'mixing' | 'complete' | 'error'
+  stage: 'pending' | 'downloading' | 'extracting_audio' | 'transcribing' | 'translating' | 'synthesizing' | 'mixing' | 'complete' | 'error'
   progress: number
   message: string
   error: string | null
@@ -200,6 +200,18 @@ export async function uploadVideo(file: File): Promise<UploadResponse> {
   const res = await apiFetch('/api/upload', { method: 'POST', body: formData })
   if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`)
   return res.json()
+}
+
+export async function createTaskFromUrl(url: string): Promise<UploadResponse> {
+  const res = await apiFetch('/api/task/from-url', {
+    method: 'POST',
+    body: JSON.stringify({ url: url.trim() }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.detail || '从视频链接创建任务失败')
+  }
+  return data
 }
 
 export async function startTask(taskId: string, config: TaskStartConfig): Promise<void> {

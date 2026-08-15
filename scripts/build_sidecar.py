@@ -150,6 +150,10 @@ def main() -> int:
         "bcut_asr",
         "--copy-metadata",
         "bcut-asr",
+        "--collect-submodules",
+        "yt_dlp",
+        "--copy-metadata",
+        "yt-dlp",
     ]
 
     if args.bundle_ffmpeg:
