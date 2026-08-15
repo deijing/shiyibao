@@ -225,6 +225,27 @@ async def check_environment() -> Dict[str, Any]:
             "recommendation": "请在环境中执行 “pip install bcut-asr” 安装依赖",
         })
 
+    # 4b. yt-dlp 视频链接下载
+    try:
+        import yt_dlp  # noqa: F401
+        checks.append({
+            "id": "yt_dlp",
+            "category": "service",
+            "name": "yt-dlp 视频链接下载",
+            "status": "pass",
+            "detail": "yt-dlp 已就绪，支持从 YouTube / B站 / 抖音等链接拉取视频",
+            "recommendation": None,
+        })
+    except ImportError:
+        checks.append({
+            "id": "yt_dlp",
+            "category": "service",
+            "name": "yt-dlp 视频链接下载",
+            "status": "fail",
+            "detail": "缺失 Python yt-dlp 依赖包，无法使用「粘贴链接一键翻译」",
+            "recommendation": "请在环境中执行 “pip install yt-dlp” 安装依赖",
+        })
+
     # 5. Python 运行环境
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     deps_ok = True

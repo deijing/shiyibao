@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { ArrowLeftRight, Upload, Sparkles, PartyPopper, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Zap, Volume2, VolumeX, RefreshCcw } from 'lucide-react'
-import { uploadVideo, startTask, fetchServerSettings, fetchGeminiModels } from '@/lib/api'
+import { ArrowLeftRight, Upload, Sparkles, PartyPopper, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Zap, Volume2, VolumeX, RefreshCcw, Link2 } from 'lucide-react'
+import { uploadVideo, createTaskFromUrl, startTask, fetchServerSettings, fetchGeminiModels } from '@/lib/api'
 import { saveActiveTaskId } from '@/lib/task-session'
 import {
   loadSettings,
@@ -44,6 +44,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
   const [progressPercent, setProgressPercent] = useState(0)
   const [statusText, setStatusText] = useState('视频解析中...')
   const [error, setError] = useState<string | null>(null)
+  const [videoUrl, setVideoUrl] = useState('')
   const [isDragging, setIsDragging] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -129,29 +130,69 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
     setLogs((prev) => [entry, ...prev])
   }
 
+  async function requireApiKeys(): Promise<AppSettings | null> {
+    let current = loadSettings()
+    if (!current.geminiApiKey || !current.xiaomiTtsKey) {
+      const serverData = await fetchServerSettings()
+      if (serverData && (serverData.geminiApiKey || serverData.xiaomiTtsKey)) {
+        current = { ...current, ...serverData }
+        saveSettings(current)
+        setSettings(current)
+      }
+    }
+
+    if (!current.geminiApiKey) {
+      setError('请先在设置中填写 Gemini API Key')
+      addLog('错误：未检测到 Gemini API Key', '校验', 'info')
+      return null
+    }
+    if (!current.xiaomiTtsKey) {
+      setError('请先在设置中填写小米 MiMo TTS Key')
+      addLog('错误：未检测到小米 MiMo TTS Key', '校验', 'info')
+      return null
+    }
+    return current
+  }
+
+  async function launchPipeline(taskId: string, current: AppSettings) {
+    const currentModel = current.geminiModel || 'gemini-2.0-flash'
+    const apiFormat = current.geminiApiFormat || 'Gemini'
+    addLog(`配置 AI [${apiFormat} | ${getGeminiModelDisplayName(currentModel)}] 翻译引擎...`, 'AI', 'process')
+    const sourceLangLabel = (current.sourceLang || 'auto') === 'auto'
+      ? '自动识别 (Auto)'
+      : getLanguageDisplayName(current.sourceLang, true)
+    addLog(`初始语言配置: ${sourceLangLabel}${(current.sourceLang || 'auto') === 'auto' ? ' (系统将在音频解析时自动判别)' : ''}`, '配置', 'info')
+    addLog(`绑定音色模型: ${current.mimoVoice || '默认预设'}`, '配置', 'info')
+    const origVol = current.originalAudioVolume ?? 0.2
+    addLog(`原音保留比例: ${origVol <= 0 ? '已静音 (0%)' : `${Math.round(origVol * 100)}%`}`, '配置', 'info')
+
+    await startTask(taskId, {
+      gemini_api_key: current.geminiApiKey,
+      gemini_api_url: current.geminiApiUrl || '',
+      gemini_api_format: apiFormat,
+      mimo_api_key: current.xiaomiTtsKey,
+      gemini_model: currentModel,
+      voice: current.mimoVoice,
+      source_lang: current.sourceLang || 'auto',
+      target_lang: current.targetLang || 'zh',
+      stream_mode: current.streamMode || 'streaming',
+      original_audio_volume: origVol,
+    })
+
+    saveActiveTaskId(taskId)
+    setProgressWidth('100%')
+    setProgressPercent(100)
+    setStatusText('任务就绪，正在跳转工作台...')
+    addLog('全流程启动成功，进入处理队列', '就绪', 'success')
+    setTimeout(() => onUploadComplete(taskId), 500)
+  }
+
   async function handleFile(file: File) {
     if (morphing) return
     setError(null)
 
-    let settings = loadSettings()
-    if (!settings.geminiApiKey || !settings.xiaomiTtsKey) {
-      const serverData = await fetchServerSettings()
-      if (serverData && (serverData.geminiApiKey || serverData.xiaomiTtsKey)) {
-        settings = { ...settings, ...serverData }
-        saveSettings(settings)
-      }
-    }
-
-    if (!settings.geminiApiKey) {
-      setError('请先在设置中填写 Gemini API Key')
-      addLog('错误：未检测到 Gemini API Key', '校验', 'info')
-      return
-    }
-    if (!settings.xiaomiTtsKey) {
-      setError('请先在设置中填写小米 MiMo TTS Key')
-      addLog('错误：未检测到小米 MiMo TTS Key', '校验', 'info')
-      return
-    }
+    const current = await requireApiKeys()
+    if (!current) return
 
     setMorphing(true)
     setStatusText('正在准备视频流传输...')
@@ -177,45 +218,70 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
       setProgressWidth('75%')
       setProgressPercent(75)
 
-      const currentModel = settings.geminiModel || 'gemini-2.0-flash'
-      const apiFormat = settings.geminiApiFormat || 'Gemini'
-      addLog(`配置 AI [${apiFormat} | ${getGeminiModelDisplayName(currentModel)}] 翻译引擎...`, 'AI', 'process')
-      const sourceLangLabel = (settings.sourceLang || 'auto') === 'auto'
-        ? '自动识别 (Auto)'
-        : getLanguageDisplayName(settings.sourceLang, true)
-      addLog(`初始语言配置: ${sourceLangLabel}${(settings.sourceLang || 'auto') === 'auto' ? ' (系统将在音频解析时自动判别)' : ''}`, '配置', 'info')
-      addLog(`绑定音色模型: ${settings.mimoVoice || '默认预设'}`, '配置', 'info')
-      const origVol = settings.originalAudioVolume ?? 0.2
-      addLog(`原音保留比例: ${origVol <= 0 ? '已静音 (0%)' : `${Math.round(origVol * 100)}%`}`, '配置', 'info')
-
-
-      await startTask(task_id, {
-        gemini_api_key: settings.geminiApiKey,
-        gemini_api_url: settings.geminiApiUrl || '',
-        gemini_api_format: apiFormat,
-        mimo_api_key: settings.xiaomiTtsKey,
-        gemini_model: currentModel,
-        voice: settings.mimoVoice,
-        source_lang: settings.sourceLang || 'auto',
-        target_lang: settings.targetLang || 'zh',
-        stream_mode: settings.streamMode || 'streaming',
-        original_audio_volume: origVol,
-      })
-
-      // 后端接收任务后立即持久化，避免短暂过渡动画期间刷新导致任务无法恢复。
-      saveActiveTaskId(task_id)
-
-      setProgressWidth('100%')
-      setProgressPercent(100)
-      setStatusText('任务就绪，正在跳转工作台...')
-      addLog('全流程启动成功，进入处理队列', '就绪', 'success')
-
-      setTimeout(() => onUploadComplete(task_id), 500)
+      await launchPipeline(task_id, current)
     } catch (err) {
       setMorphing(false)
       setProgressWidth('0%')
       setProgressPercent(0)
       const errMsg = err instanceof Error ? err.message : '上传失败，请重试'
+      setError(errMsg)
+      addLog(`异常中断: ${errMsg}`, '错误', 'info')
+    }
+  }
+
+  function isHttpUrl(value: string): boolean {
+    try {
+      const parsed = new URL(value)
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }
+
+  async function handleUrlTranslate(e?: React.FormEvent) {
+    e?.preventDefault()
+    if (morphing) return
+    setError(null)
+
+    let url = videoUrl.trim()
+    if (!url) {
+      setError('请粘贴视频链接')
+      addLog('错误：未填写视频链接', '校验', 'info')
+      return
+    }
+    if (!/^https?:\/\//i.test(url) && /^[\w.-]+\.[a-z]{2,}([/:].*)?$/i.test(url)) {
+      url = `https://${url}`
+      setVideoUrl(url)
+    }
+    if (!isHttpUrl(url)) {
+      setError('请输入有效的 http/https 视频链接')
+      addLog('错误：视频链接格式无效', '校验', 'info')
+      return
+    }
+
+    const current = await requireApiKeys()
+    if (!current) return
+
+    setMorphing(true)
+    setStatusText('正在解析视频链接...')
+    setProgressWidth('20%')
+    setProgressPercent(20)
+    setLogs([])
+    addLog(`接收视频链接: ${url}`, '接收', 'process')
+
+    try {
+      addLog('向转译节点登记链接任务...', '传输', 'process')
+      const { task_id } = await createTaskFromUrl(url)
+      addLog(`链接任务已创建，Task ID: ${task_id.substring(0, 8)}...`, '存储', 'success')
+      setStatusText('正在启动 AI 语义转译推理...')
+      setProgressWidth('75%')
+      setProgressPercent(75)
+      await launchPipeline(task_id, current)
+    } catch (err) {
+      setMorphing(false)
+      setProgressWidth('0%')
+      setProgressPercent(0)
+      const errMsg = err instanceof Error ? err.message : '链接转译启动失败，请重试'
       setError(errMsg)
       addLog(`异常中断: ${errMsg}`, '错误', 'info')
     }
@@ -271,7 +337,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
               AI 赋能，打破语言边界
             </h1>
             <p className="text-xs sm:text-sm lg:text-base text-slate-500 dark:text-slate-400 max-w-xl leading-relaxed font-normal">
-              一键实现海外视频高精度字幕翻译与母语级音色重构，让内容跨国界无缝传播。
+              一键实现海外视频高精度字幕翻译与母语级音色重构。支持拖拽本地文件，或粘贴 YouTube / B站 / 抖音链接一键翻译。
             </p>
           </div>
 
@@ -413,7 +479,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                 </p>
 
                 <p className="text-xs sm:text-sm text-slate-400 dark:text-slate-500 font-normal mt-1.5">
-                  支持 MP4, MOV, MKV 格式 (单文件最大上限 2GB)
+                  支持 MP4, MOV, MKV 格式 (单文件最大上限 2GB)，也可在下方粘贴视频链接
                 </p>
 
                 <div className="mt-8 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 dark:text-slate-500">
@@ -450,6 +516,34 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
               </div>
             )}
           </div>
+
+          <form
+            onSubmit={handleUrlTranslate}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-4 w-full p-2 sm:p-2.5 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
+          >
+            <div className="flex items-center gap-2 flex-1 min-w-0 px-2">
+              <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                <Link2 className="w-4 h-4 stroke-[1.5]" />
+              </div>
+              <Input
+                type="text"
+                inputMode="url"
+                value={videoUrl}
+                onChange={(e) => setVideoUrl(e.target.value)}
+                placeholder="粘贴 YouTube / B站 / 抖音等视频链接，一键翻译"
+                disabled={morphing}
+                className="h-9 border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm px-0"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={morphing}
+              className="h-9 px-4 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white shrink-0 cursor-pointer transition-colors"
+            >
+              一键翻译
+            </button>
+          </form>
 
           {/* 视频原声保留音量快捷调控栏 */}
           <div className="mt-4 w-full p-3.5 sm:p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -607,7 +701,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                       暂无在线处理任务
                     </p>
                     <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-relaxed max-w-[220px]">
-                      在左侧拖拽或点击上传视频后，此处将实时呈现在线解压、音轨提取与多模态转译日志。
+                      在左侧拖拽、点击上传或粘贴视频链接后，此处将实时呈现在线解压、音轨提取与多模态转译日志。
                     </p>
                   </div>
                 </div>

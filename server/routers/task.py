@@ -6,6 +6,7 @@ import logging
 import shutil
 from pathlib import Path
 import re
+from urllib.parse import urlparse
 import uuid
 
 from filelock import FileLock
@@ -20,6 +21,7 @@ from ..config import MIMO_API_KEY, PROJECTS_DIR, TASKS_DIR, UPLOADS_DIR
 from ..models import (
     AIAnalyzeRequest,
     AIAnalyzeResponse,
+    FromUrlRequest,
     RegisterLocalRequest,
     ScanDirectoryRequest,
     ScanDirectoryResponse,
@@ -103,7 +105,7 @@ def _friendly_export_name(meta: dict) -> str:
     lang_label = _EXPORT_LANG_LABELS.get(key, "中文")
     return f"{base_name}_{lang_label}翻译版.mp4"
 from ..performance import task_limiter
-from ..services import asr, audio, language_detector, mixer, translate, tts
+from ..services import asr, audio, downloader, language_detector, mixer, translate, tts
 
 router = APIRouter()
 
@@ -176,6 +178,61 @@ def _find_video(task_id: str) -> Path:
     if not video_path.exists():
         raise RuntimeError(f"上传的视频文件不存在: {meta['filename']}")
     return video_path
+
+
+def _cached_url_video(task_id: str) -> Path | None:
+    upload_dir = UPLOADS_DIR / _task_dir(task_id).name
+    if not upload_dir.exists():
+        return None
+    candidates = [
+        path for path in upload_dir.iterdir()
+        if path.is_file()
+        and path.suffix.lower() in VIDEO_EXTENSIONS
+        and path.stat().st_size > 100
+        and path.stem != "pending"
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_size)
+
+
+async def _ensure_url_video(task_id: str, source_url: str, log_cb) -> None:
+    cached = _cached_url_video(task_id)
+    if cached is not None:
+        log_cb("下载", f"⚡ 发现已下载的视频缓存 {cached.name}，跳过拉取", "success")
+        _update_meta(task_id, filename=cached.name)
+        return
+
+    _update_meta(
+        task_id,
+        stage=TaskStage.DOWNLOADING.value,
+        progress=5,
+        message="正在下载视频",
+        error=None,
+    )
+    host = urlparse(source_url).netloc or "远程站点"
+    log_cb("下载", f"正在从 {host} 拉取视频...")
+    upload_dir = UPLOADS_DIR / _task_dir(task_id).name
+
+    def progress(msg: str) -> None:
+        log_cb("下载", msg)
+        match = re.search(r"(\d+)%", msg)
+        if match:
+            pct = int(match.group(1))
+            _update_meta(task_id, message=msg, progress=min(20, 5 + pct // 5))
+        else:
+            _update_meta(task_id, message=msg)
+
+    try:
+        result = await downloader.download_video(source_url, upload_dir, progress_cb=progress)
+    except (downloader.DownloadError, downloader.VideoUrlError) as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    fields: dict = {"filename": result.filename}
+    if result.title:
+        fields["video_title"] = result.title
+    _update_meta(task_id, **fields)
+    log_cb("下载", f"视频下载完成: {result.filename}", "success")
 
 
 def _sanitize_folder_name(name: str) -> str:
@@ -337,6 +394,10 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
         _append_log(task_id, tag, msg, log_type)
 
     try:
+        source_url = (_read_meta(task_id).get("source_url") or "").strip()
+        if source_url:
+            await _ensure_url_video(task_id, source_url, log_cb)
+
         video_path = _find_video(task_id)
         log_cb("系统", f"初始化转译引擎，解析输入视频文件: {video_path.name}")
         orig_vol = max(0.0, float(getattr(req, "original_audio_volume", 0.2)))
@@ -903,6 +964,34 @@ async def delete_task(task_id: str) -> dict:
 async def get_task_logs(task_id: str) -> list[dict]:
     meta = _read_meta(task_id)
     return meta.get("logs", [])
+
+
+@router.post("/task/from-url", response_model=UploadResponse)
+async def create_task_from_url(req: FromUrlRequest) -> UploadResponse:
+    """根据视频链接创建待处理任务；真正的下载发生在 /start 流水线第一步。"""
+    try:
+        url = downloader.normalize_video_url(req.url)
+    except downloader.VideoUrlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    task_id = str(uuid.uuid4())
+    task_dir = TASKS_DIR / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (UPLOADS_DIR / task_id).mkdir(parents=True, exist_ok=True)
+    meta = {
+        "task_id": task_id,
+        "filename": "pending.mp4",
+        "source_url": url,
+        "stage": "pending",
+        "progress": 0,
+        "message": "等待下载视频",
+        "error": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (task_dir / "task.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return UploadResponse(task_id=task_id, filename="pending.mp4")
 
 
 @router.post("/task/register-local", response_model=UploadResponse)

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class TaskStage(str, Enum):
     PENDING = "pending"
+    DOWNLOADING = "downloading"
     EXTRACTING_AUDIO = "extracting_audio"
     TRANSCRIBING = "transcribing"
     TRANSLATING = "translating"
@@ -71,6 +72,10 @@ class UploadResponse(BaseModel):
 class RegisterLocalRequest(BaseModel):
     input_file_path: str
     output_dir: Optional[str] = None
+
+
+class FromUrlRequest(BaseModel):
+    url: str = Field(..., min_length=1)
 
 
 class ScanDirectoryRequest(BaseModel):

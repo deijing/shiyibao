@@ -42,7 +42,7 @@ const LANG_LABELS: Record<string, string> = {
 
 // 可视化步骤条的五个阶段
 const PIPELINE_STEPS = [
-  { id: 'upload', label: '上传解析', stages: ['pending', 'extracting_audio'] },
+  { id: 'upload', label: '上传解析', stages: ['pending', 'downloading', 'extracting_audio'] },
   { id: 'asr', label: '语音识别(ASR)', stages: ['transcribing'] },
   { id: 'translate', label: 'AI 翻译核心', stages: ['translating'] },
   { id: 'tts', label: '音色克隆与合成', stages: ['synthesizing'] },

@@ -12,14 +12,29 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.8'
+export const CURRENT_VERSION = 'v0.1.9'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
+  {
+    version: 'v0.1.9',
+    date: '2026-08-15',
+    title: '粘贴视频链接一键翻译',
+    isLatest: true,
+    highlights: [
+      '首页支持粘贴 YouTube / B站 / 抖音等视频链接，一键下载并进入完整转译流水线',
+      '新增下载阶段进度展示，失败可从断点跳过已缓存的源视频继续',
+    ],
+    details: {
+      features: [
+        '后端新增 POST /api/task/from-url，用 yt-dlp 拉取远程视频后再走现有 ASR / 翻译 / TTS / 合成流程',
+        '处理页与任务详情识别 downloading 阶段，链接任务可在历史记录中重试',
+      ],
+    },
+  },
   {
     version: 'v0.1.8',
     date: '2026-08-09',
     title: '稳定性修复、轮询热点治理与长视频 TTS 混音性能优化',
-    isLatest: true,
     highlights: [
       '修复任务出错后点击「一键重试 / 从断点继续」界面不再刷新的问题，轮询可正确重新启动',
       '降低处理页与导航栏对同一任务状态的重复轮询，合成阶段后冻结字幕全量重拉，减少无效网络与渲染开销',
