@@ -67,10 +67,13 @@ def request_source_is_trusted(
     local_token: str | None = None,
     origin: str | None = None,
     referer: str | None = None,
+    sec_fetch_site: str | None = None,
 ) -> bool:
     """判断一个 /api 请求是否来自可信来源。
 
     - token 匹配即可信（桌面端注入）。
+    - ``Sec-Fetch-Site: cross-site`` 一律拒绝：浏览器强制设置该头，脚本无法伪造，
+      可挡住 Origin/Referer 缺失时的跨站 CSRF。
     - Origin 或 Referer 存在时以主机名白名单为准；浏览器强制设置这两个头，
       网页脚本无法覆盖，因此这条足以挡住跨站读取。
     - 两者都不存在时视为本机脚本/CLI 调用，或是 no-referrer 的媒体标签请求。
@@ -78,6 +81,8 @@ def request_source_is_trusted(
     """
     if local_token_matches(local_token):
         return True
+    if (sec_fetch_site or "").strip().lower() == "cross-site":
+        return False
     for value in (origin, referer):
         if (value or "").strip():
             return is_local_ui_origin(value)

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
 import sys
 import time
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 APP_DIR = ROOT / "app"

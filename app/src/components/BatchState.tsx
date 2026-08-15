@@ -681,7 +681,7 @@ export default function BatchState() {
       : 0
 
   return (
-    <div className="w-full h-[calc(100vh-4.2rem)] overflow-hidden flex flex-col p-3 sm:p-5 max-w-7xl mx-auto">
+    <div className="w-full flex-1 min-h-0 overflow-hidden flex flex-col p-3 sm:p-5 max-w-7xl mx-auto">
       {/* 隐藏的原生文件夹选择器输入框（用于方式一：弹窗选择） */}
       <input
         ref={inputFolderPickerRef}

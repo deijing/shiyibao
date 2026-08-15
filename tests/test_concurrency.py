@@ -40,9 +40,12 @@ def test_translation_batches_run_with_bounded_concurrency(monkeypatch, tmp_path)
             active += 1
             peak = max(peak, active)
             await asyncio.sleep(0.01)
-            source_texts = __import__("json").loads(json["contents"][0]["parts"][0]["text"])
+            payload = __import__("json").loads(json["contents"][0]["parts"][0]["text"])
             active -= 1
-            translations = [f"译:{text}" for text in source_texts]
+            if payload and isinstance(payload[0], dict):
+                translations = [{"id": item["id"], "text": f"译:{item['text']}"} for item in payload]
+            else:
+                translations = [f"译:{text}" for text in payload]
             return _FakeResponse({
                 "candidates": [{"content": {"parts": [{"text": __import__("json").dumps(translations)}]}}]
             })

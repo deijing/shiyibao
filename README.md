@@ -4,20 +4,20 @@
 
 <img src="app/public/logo.png" width="280" alt="ShiYiBao Logo" />
 
-# 视译宝 (ShiYiBao) v0.1.10
+# 视译宝 (ShiYiBao) v0.1.11
 
 ### 全自动化 AI 视频跨语言转译、多模型智能翻译与原声音色克隆重构工作台
 
 [![Official Website](https://img.shields.io/badge/Official_Website-shiyibao--web.vercel.app-7c3aed?logo=vercel&logoColor=white&style=for-the-badge)](https://shiyibao-web.vercel.app/)
 [![GitHub Repository](https://img.shields.io/badge/GitHub-deijing%2Fshiyibao-blue?logo=github&style=for-the-badge)](https://github.com/deijing/shiyibao)
-[![Version](https://img.shields.io/badge/Version-v0.1.10-8b5cf6?style=for-the-badge)](https://github.com/deijing/shiyibao/releases)
+[![Version](https://img.shields.io/badge/Version-v0.1.11-8b5cf6?style=for-the-badge)](https://github.com/deijing/shiyibao/releases)
 [![License](https://img.shields.io/badge/License-MIT-emerald?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blueviolet?style=for-the-badge)](https://github.com/deijing/shiyibao/releases)
 [![Tauri](https://img.shields.io/badge/Tauri-v2.0-FFC107?logo=tauri&logoColor=black&style=for-the-badge)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=black&style=for-the-badge)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white&style=for-the-badge)](https://fastapi.tiangolo.com)
 
-[🌐 **官方网站**](https://shiyibao-web.vercel.app/) • [📖 快速开始](#-快速开始) • [✨ 核心特性](#-核心特性) • [🧠 适配 AI 大模型](#-适配-ai-at-大模型) • [🌐 多语言翻译](#-多语言全语种互译) • [🏗️ 系统架构](#-系统架构) • [⚙️ 配置说明](#%EF%B8%8F-配置说明)
+[🌐 **官方网站**](https://shiyibao-web.vercel.app/) • [🐳 Docker 启动](#-docker-一键启动) • [📖 快速开始](#-快速开始) • [✨ 核心特性](#-核心特性) • [🧠 适配 AI 大模型](#-适配-ai-at-大模型) • [🌐 多语言翻译](#-多语言全语种互译) • [🏗️ 系统架构](#-系统架构) • [⚙️ 配置说明](#%EF%B8%8F-配置说明)
 
 </div>
 
@@ -151,7 +151,47 @@ graph TD
 
 ## 🚀 快速开始
 
-> 💡 **提示**：推荐使用 [⚡ AI Agent 一键部署](#-ai-agent-一键部署-recommended) 复制部署指令给您的 AI 助手完成全自动安装与启动。
+> 💡 **提示**：本机已安装 Docker 时，优先使用下面的 Compose 一键启动；没有 Docker 时，可使用 [⚡ AI Agent 一键部署](#-ai-agent-一键部署-recommended) 或手动安装依赖。
+
+### 🐳 Docker 一键启动
+
+无需在宿主机安装 Python、Node.js 或 FFmpeg。镜像内已包含 FastAPI、构建后的 Web 控制台，以及带 libass 的 FFmpeg 与中文字体。
+
+```bash
+git clone https://github.com/deijing/shiyibao.git
+cd shiyibao
+cp .env.example .env   # 可选：填入 GEMINI_API_KEY / MIMO_API_KEY 等
+docker compose up --build
+```
+
+启动后在浏览器打开：
+- 🌐 **Web 控制台**: http://localhost:8000
+- 📚 **API 文档**: http://localhost:8000/docs
+- 🩺 **健康检查**: http://localhost:8000/api/health
+
+若本机 `8000` 已被占用：
+
+```bash
+SHIYIBAO_PORT=8001 docker compose up --build
+```
+
+然后访问 http://localhost:8001 。
+
+任务视频与工程文件默认保存在 Docker 卷 `shiyibao-data` 中，重启容器不会丢失。密钥也可启动后在应用【偏好设置】里填写。
+
+不使用 Compose 时：
+
+```bash
+docker build -t shiyibao .
+docker run --name shiyibao --init -p 127.0.0.1:8000:8000 \
+  -e SHIYIBAO_DATA_DIR=/data \
+  -v shiyibao-data:/data \
+  shiyibao
+```
+
+若已准备 `.env`，可追加 `--env-file .env` 把密钥注入容器。
+
+> 默认只把端口发布到 `127.0.0.1`，与本地闭环安全模型一致。请通过 http://localhost:8000 访问；用局域网 IP 打开会被接口来源校验拦截。
 
 ### 🛠️ 手动环境准备
 

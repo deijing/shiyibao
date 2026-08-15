@@ -130,3 +130,32 @@ def test_build_vf_filter_args_fallback(monkeypatch, tmp_path) -> None:
     assert mixer._build_vf_filter_args(sub_path) == []
 
 
+def test_escape_concat_path_uses_demuxer_quote_escape(tmp_path) -> None:
+    path = tmp_path / "Tom's Video.mp4"
+    path.write_bytes(b"x")
+    escaped = mixer._escape_concat_path(path)
+    assert r"\'" in escaped
+    assert r"'\''" not in escaped
+    assert f"file '{escaped}'".count("'") >= 2
+
+
+def test_concat_chunks_writes_escaped_list_file(monkeypatch, tmp_path) -> None:
+    chunk = tmp_path / "Tom's Video.mp4"
+    chunk.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2000)
+
+    async def fake_playable(_path, **_kwargs) -> bool:
+        return True
+
+    async def fake_run_ffmpeg(_args) -> None:
+        (tmp_path / "final.mp4").write_bytes(b"ok")
+
+    monkeypatch.setattr(mixer, "is_playable_mp4", fake_playable)
+    monkeypatch.setattr(mixer, "run_ffmpeg", fake_run_ffmpeg)
+    asyncio.run(mixer.concat_chunks(tmp_path, [chunk]))
+
+    listing = (tmp_path / "chunks_concat.txt").read_text(encoding="utf-8")
+    assert r"\'" in listing
+    assert r"'\''" not in listing
+    assert listing.startswith("file '")
+
+

@@ -20,3 +20,22 @@ def test_ffmpeg_error_explains_missing_path(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="PATH"):
         asyncio.run(audio.run_ffmpeg(["-version"]))
+
+
+def test_is_playable_mp4_rejects_crash_leftovers(tmp_path) -> None:
+    junk = tmp_path / "chunk_000.mp4"
+    junk.write_bytes(b"X" * 2000)
+    assert not asyncio.run(audio.is_playable_mp4(junk))
+    missing = tmp_path / "missing.mp4"
+    assert not asyncio.run(audio.is_playable_mp4(missing))
+
+
+def test_is_playable_mp4_accepts_ftyp_when_duration_ok(monkeypatch, tmp_path) -> None:
+    chunk = tmp_path / "chunk_000.mp4"
+    chunk.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2000)
+
+    async def fake_probe(_path) -> float:
+        return 1.25
+
+    monkeypatch.setattr(audio, "probe_duration", fake_probe)
+    assert asyncio.run(audio.is_playable_mp4(chunk))

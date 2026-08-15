@@ -207,11 +207,18 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
       await new Promise((resolve) => setTimeout(resolve, 300))
 
       setStatusText('正在上传视频源文件...')
-      setProgressWidth('40%')
-      setProgressPercent(40)
+      setProgressWidth('15%')
+      setProgressPercent(15)
       addLog('上传至云端转译节点中...', '传输', 'process')
 
-      const { task_id } = await uploadVideo(file)
+      const { task_id } = await uploadVideo(file, ({ loaded, total, percent }) => {
+        const loadedMb = (loaded / (1024 * 1024)).toFixed(1)
+        const totalMb = (total / (1024 * 1024)).toFixed(1)
+        setStatusText(`正在上传视频源文件 (${loadedMb} MB / ${totalMb} MB - ${percent}%)...`)
+        const computedPercent = Math.min(70, Math.max(15, Math.round(percent * 0.7)))
+        setProgressWidth(`${computedPercent}%`)
+        setProgressPercent(computedPercent)
+      })
 
       addLog(`视频上传完成，生成 Task ID: ${task_id.substring(0, 8)}...`, '存储', 'success')
       setStatusText('正在启动 AI 语义转译推理...')

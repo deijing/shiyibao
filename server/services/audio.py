@@ -1,8 +1,8 @@
 import asyncio
 import os
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 
 def _common_media_dirs() -> list[Path]:
@@ -141,6 +141,36 @@ async def probe_duration(video_path: Path) -> float:
         return float(stdout.decode("utf-8", errors="replace").strip())
     except (ValueError, AttributeError):
         return 0.0
+
+
+_MIN_REUSABLE_MEDIA_BYTES = 1000
+_FTYP_HEADER_BYTES = 64
+
+
+def _read_prefix(path: Path, size: int) -> bytes:
+    with path.open("rb") as fh:
+        return fh.read(size)
+
+
+async def is_playable_mp4(path: Path, *, min_size: int = _MIN_REUSABLE_MEDIA_BYTES) -> bool:
+    """判断 MP4 是否可复用为断点缓存。
+
+    仅看文件存在和体积会把崩溃残留的损坏碎片当成有效分片，后续 concat 会失败。
+    这里要求 ISO BMFF ``ftyp`` 头，并在 ffprobe 可用时再确认时长。
+    """
+    try:
+        if not path.is_file() or path.stat().st_size < min_size:
+            return False
+        header = await asyncio.to_thread(_read_prefix, path, _FTYP_HEADER_BYTES)
+    except OSError:
+        return False
+    if b"ftyp" not in header:
+        return False
+    duration = await probe_duration(path)
+    if duration > 0.05:
+        return True
+    # 无 ffprobe 时无法再探测，退化为容器头检查。
+    return find_media_binary("ffprobe") is None
 
 
 async def has_audio_stream(video_path: Path) -> bool:

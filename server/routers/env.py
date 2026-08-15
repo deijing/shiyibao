@@ -1,10 +1,9 @@
 import asyncio
-import os
 import platform
 import shutil
 import subprocess
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 import httpx
 from fastapi import APIRouter
@@ -17,8 +16,8 @@ router = APIRouter(tags=["environment"])
 
 
 @router.get("/environment/check")
-async def check_environment() -> Dict[str, Any]:
-    checks: List[Dict[str, Any]] = []
+async def check_environment() -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
 
     # 1. FFmpeg & FFprobe
     ffmpeg_path = find_media_binary("ffmpeg")
@@ -135,52 +134,88 @@ async def check_environment() -> Dict[str, Any]:
             "recommendation": ff_install_hint,
         })
 
-    # 2. Gemini API 连通性
+    # 2. AI 翻译服务连通性（动态适配 Gemini / OpenAI / Anthropic / 自定义代理）
     user_settings = get_user_settings()
-    gemini_key = user_settings.get("geminiApiKey", "").strip()
-    if not gemini_key:
+    gemini_key_raw = user_settings.get("geminiApiKey", "").strip()
+    api_format = (user_settings.get("geminiApiFormat") or "Gemini").strip()
+    api_url = (user_settings.get("geminiApiUrl") or "").strip().rstrip("/")
+    service_name = f"{api_format} AI 翻译服务" if api_format != "Gemini" else "Gemini AI 翻译服务"
+
+    if not gemini_key_raw:
         checks.append({
             "id": "gemini_api",
             "category": "service",
-            "name": "Gemini AI 翻译服务",
+            "name": service_name,
             "status": "warn",
-            "detail": "Gemini API Key 未配置",
-            "recommendation": "请在【偏好设置】中填入有效的 Gemini API Key",
+            "detail": f"{api_format} API Key 未配置",
+            "recommendation": f"请在【偏好设置】中填入有效的 {api_format} API Key",
         })
     else:
+        # 支持逗号分隔多 key
+        gemini_key = gemini_key_raw.replace("，", ",").split(",")[0].strip()
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                # key 只走请求头：写在 query string 里会被 httpx 日志与任何中间代理原样记下来。
-                resp = await client.get(
-                    "https://generativelanguage.googleapis.com/v1beta/models",
-                    headers={"x-goog-api-key": gemini_key},
-                )
-                if resp.status_code == 200:
+            if api_format in ("OpenAI", "OpenAI-Response"):
+                default_base = "https://api.openai.com"
+                root_url = api_url if api_url else default_base
+                url = f"{root_url}/models" if root_url.endswith("/v1") else f"{root_url}/v1/models"
+                headers = {"Authorization": f"Bearer {gemini_key}"}
+            elif api_format == "Anthropic":
+                default_base = "https://api.anthropic.com"
+                root_url = api_url if api_url else default_base
+                url = f"{root_url}/messages" if root_url.endswith("/v1") else f"{root_url}/v1/messages"
+                headers = {"x-api-key": gemini_key, "anthropic-version": "2023-06-01"}
+            else:
+                default_base = "https://generativelanguage.googleapis.com"
+                root_url = api_url if api_url else default_base
+                url = f"{root_url}/models" if root_url.endswith("/v1beta") else f"{root_url}/v1beta/models"
+                headers = {"x-goog-api-key": gemini_key}
+
+            async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
+                if api_format == "Anthropic":
+                    resp = await client.post(url, json={
+                        "model": "claude-3-5-haiku-20241022",
+                        "max_tokens": 5,
+                        "messages": [{"role": "user", "content": "hi"}]
+                    })
+                else:
+                    resp = await client.get(url)
+
+                if resp.status_code in (200, 201):
                     checks.append({
                         "id": "gemini_api",
                         "category": "service",
-                        "name": "Gemini AI 翻译服务",
+                        "name": service_name,
                         "status": "pass",
-                        "detail": "Gemini API Key 校验成功，网络连通良好",
+                        "detail": f"{api_format} API Key 校验成功，服务端点通信正常",
                         "recommendation": None,
                     })
                 else:
+                    detail = f"{api_format} API 响应异常 (HTTP {resp.status_code})"
+                    try:
+                        err = resp.json()
+                        if "error" in err:
+                            if isinstance(err["error"], dict) and "message" in err["error"]:
+                                detail = f"{api_format} 报错: {err['error']['message']}"
+                            elif isinstance(err["error"], str):
+                                detail = f"{api_format} 报错: {err['error']}"
+                    except Exception:
+                        pass
                     checks.append({
                         "id": "gemini_api",
                         "category": "service",
-                        "name": "Gemini AI 翻译服务",
+                        "name": service_name,
                         "status": "fail",
-                        "detail": f"Gemini API 响应异常 (HTTP {resp.status_code})",
-                        "recommendation": "请检查 Gemini API Key 是否有效，或网络代理直通 API 端点",
+                        "detail": detail,
+                        "recommendation": f"请检查 {api_format} API Key 是否有效，或检查代理地址与网络连通性",
                     })
         except Exception as e:
             checks.append({
                 "id": "gemini_api",
                 "category": "service",
-                "name": "Gemini AI 翻译服务",
+                "name": service_name,
                 "status": "fail",
-                "detail": f"Gemini 网络端点连接超时或失败: {str(e)}",
-                "recommendation": "请检查网络代理/DNS设置或网络连通性",
+                "detail": f"{api_format} 端点连接超时或失败: {str(e)}",
+                "recommendation": "请检查网络代理/DNS设置或自定义 Base URL 是否正确",
             })
 
     # 3. 小米 MiMo TTS
@@ -250,7 +285,7 @@ async def check_environment() -> Dict[str, Any]:
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     deps_ok = True
     missing_deps = []
-    for pkg in ["fastapi", "httpx", "pydantic", "uvicorn"]:
+    for pkg in ["fastapi", "httpx", "pydantic", "uvicorn", "filelock"]:
         try:
             __import__(pkg)
         except ImportError:
@@ -263,7 +298,7 @@ async def check_environment() -> Dict[str, Any]:
             "category": "environment",
             "name": "Python 运行环境与核心包",
             "status": "pass",
-            "detail": f"Python v{py_ver} (fastapi / httpx / pydantic 均正常加载)",
+            "detail": f"Python v{py_ver} (fastapi / httpx / pydantic / filelock 均正常加载)",
             "recommendation": None,
         })
     else:

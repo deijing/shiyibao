@@ -1,20 +1,18 @@
 import asyncio
-from contextlib import suppress
-from datetime import datetime, timezone
 import json
 import logging
-import shutil
-from pathlib import Path
 import re
-from urllib.parse import urlparse
+import shutil
 import uuid
-
-from filelock import FileLock
-
-from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from contextlib import suppress
+from datetime import UTC, datetime
+from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import FileResponse, StreamingResponse
+from filelock import FileLock
 
 from .. import security
 from ..config import MIMO_API_KEY, PROJECTS_DIR, TASKS_DIR, UPLOADS_DIR
@@ -32,6 +30,8 @@ from ..models import (
     TaskStatusResponse,
     UploadResponse,
 )
+from ..performance import task_limiter
+from ..services import asr, audio, downloader, language_detector, mixer, translate, tts
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +104,7 @@ def _friendly_export_name(meta: dict) -> str:
     key = str(target_lang).lower().strip() if target_lang else "zh"
     lang_label = _EXPORT_LANG_LABELS.get(key, "中文")
     return f"{base_name}_{lang_label}翻译版.mp4"
-from ..performance import task_limiter
-from ..services import asr, audio, downloader, language_detector, mixer, translate, tts
+
 
 router = APIRouter()
 
@@ -165,6 +164,23 @@ def _append_log(task_id: str, tag: str, message: str, log_type: str = "info") ->
         tmp.replace(meta_file)
 
 
+async def _update_meta_async(task_id: str, **fields) -> None:
+    """把带 FileLock 的元数据写入卸到线程池，避免阻塞事件循环。"""
+    await asyncio.to_thread(_update_meta, task_id, **fields)
+
+
+def _offload_log(task_id: str, tag: str, message: str, log_type: str = "info") -> None:
+    """日志写入走线程池；供同步 callback 在事件循环线程上安全调用。"""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _append_log(task_id, tag, message, log_type)
+        return
+    fut = loop.create_task(asyncio.to_thread(_append_log, task_id, tag, message, log_type))
+    _background_tasks.add(fut)
+    fut.add_done_callback(_background_tasks.discard)
+
+
 def _find_video(task_id: str) -> Path:
     meta = _read_meta(task_id)
     # 从本地目录注册的批处理任务直接引用原文件。
@@ -200,10 +216,10 @@ async def _ensure_url_video(task_id: str, source_url: str, log_cb) -> None:
     cached = _cached_url_video(task_id)
     if cached is not None:
         log_cb("下载", f"⚡ 发现已下载的视频缓存 {cached.name}，跳过拉取", "success")
-        _update_meta(task_id, filename=cached.name)
+        await _update_meta_async(task_id, filename=cached.name)
         return
 
-    _update_meta(
+    await _update_meta_async(
         task_id,
         stage=TaskStage.DOWNLOADING.value,
         progress=5,
@@ -231,7 +247,7 @@ async def _ensure_url_video(task_id: str, source_url: str, log_cb) -> None:
     fields: dict = {"filename": result.filename}
     if result.title:
         fields["video_title"] = result.title
-    _update_meta(task_id, **fields)
+    await _update_meta_async(task_id, **fields)
     log_cb("下载", f"视频下载完成: {result.filename}", "success")
 
 
@@ -368,6 +384,18 @@ def _relative_segments_for_window(
     return rel
 
 
+async def _reusable_rendered_mp4(path: Path) -> bool:
+    """断点续传只复用可探测的完整 MP4；损坏碎片直接删除以免污染拼接。"""
+    if await audio.is_playable_mp4(path):
+        return True
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    return False
+
+
 def _build_chunk_windows(
     segments: list[dict], total_duration: float, chunk_seconds: float
 ) -> list[tuple[float, float, list[dict]]]:
@@ -410,7 +438,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
     task_dir = _task_dir(task_id)
 
     def log_cb(tag: str, msg: str, log_type: str = "info"):
-        _append_log(task_id, tag, msg, log_type)
+        _offload_log(task_id, tag, msg, log_type)
 
     try:
         source_url = (_read_meta(task_id).get("source_url") or "").strip()
@@ -420,14 +448,14 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
         video_path = _find_video(task_id)
         log_cb("系统", f"初始化转译引擎，解析输入视频文件: {video_path.name}")
         orig_vol = max(0.0, float(getattr(req, "original_audio_volume", 0.2)))
-        _update_meta(task_id, stream_mode=req.stream_mode, original_audio_volume=orig_vol)
+        await _update_meta_async(task_id, stream_mode=req.stream_mode, original_audio_volume=orig_vol)
 
         # 1. 音频提取阶段（断点续传检查）
         audio_path = task_dir / "audio.aac"
         if audio_path.exists() and audio_path.stat().st_size > 100:
             log_cb("音频提取", "⚡ 发现已有提取好的音频缓存 audio.aac，秒级跳过音频提取", "success")
         else:
-            _update_meta(task_id, stage=TaskStage.EXTRACTING_AUDIO.value, progress=10,
+            await _update_meta_async(task_id, stage=TaskStage.EXTRACTING_AUDIO.value, progress=10,
                          message="提取音频", error=None)
             log_cb("音频提取", "启动 FFmpeg 提取原视频 16kHz PCM 单声道音频流...")
             audio_path = await audio.extract_audio(task_dir, video_path)
@@ -446,7 +474,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                 segments = []
 
         if not segments:
-            _update_meta(task_id, stage=TaskStage.TRANSCRIBING.value, progress=30,
+            await _update_meta_async(task_id, stage=TaskStage.TRANSCRIBING.value, progress=30,
                          message="语音识别中")
             log_cb("语音识别", "启动 BcutASR (必剪云端语音识别引擎) 提取语音段落...")
             segments = await asr.transcribe(task_dir, audio_path, log_cb=log_cb)
@@ -467,7 +495,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                 )
                 source_lang = detected_code
                 log_cb("语音识别", f"✨ 自动识别原声语言成功：{detected_name} ({detected_code})", "success")
-                _update_meta(task_id, source_lang=detected_code)
+                await _update_meta_async(task_id, source_lang=detected_code)
 
         model_name = (req.gemini_model or "gemini-2.0-flash").replace("models/", "")
         api_format = req.gemini_api_format or "Gemini"
@@ -494,7 +522,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                 pass
 
         if need_translate:
-            _update_meta(task_id, stage=TaskStage.TRANSLATING.value, progress=45,
+            await _update_meta_async(task_id, stage=TaskStage.TRANSLATING.value, progress=45,
                          message="翻译全片字幕中")
             log_cb("AI 翻译", f"正在请求 [{api_format}] 协议大模型 [{model_name}] 翻译字幕 (源语言: {source_lang}, 目标语言: {req.target_lang})...", "api")
             segments = await translate.translate_subtitles(
@@ -509,7 +537,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
         attempted = [seg for seg in segments if "translated_fallback" in seg]
         fallback_count = sum(1 for seg in attempted if seg["translated_fallback"])
         total_segments = len(attempted)
-        _update_meta(task_id, translation_fallback_count=fallback_count,
+        await _update_meta_async(task_id, translation_fallback_count=fallback_count,
                      translation_total=total_segments)
         if total_segments > 0 and fallback_count == total_segments:
             raise RuntimeError(
@@ -531,7 +559,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                 gemini_api_format=api_format,
             )
             if video_title:
-                _update_meta(task_id, video_title=video_title)
+                await _update_meta_async(task_id, video_title=video_title)
                 safe_folder_name, _ = _sync_project_folder_alias(task_id, video_title)
                 log_cb("AI 翻译", f"✨ 智能生成视频标题: \"{video_title}\"，工程目录已关联为: {safe_folder_name}", "info")
             else:
@@ -549,67 +577,89 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             global_utterances = tts._build_tts_utterances(segments)
             windows = _build_chunk_windows(global_utterances, duration_total, STREAM_CHUNK_SECONDS)
             total = len(windows)
-            log_cb("流式渲染", f"⚡ 启用真·增量渲染：全片切分为 {total} 个约 {int(STREAM_CHUNK_SECONDS)} 秒时间窗，逐段边渲染边播放。", "info")
-            _update_meta(task_id, stage=TaskStage.SYNTHESIZING.value,
+            # 动态计算首批预缓冲开播门槛（按视频总时长约 10%，下限 30 秒，上限 5 分钟 / 300 秒）
+            target_buffer_seconds = max(30.0, min(300.0, duration_total * 0.10))
+            buffer_mins = round(target_buffer_seconds / 60.0, 1)
+            buffer_ratio_pct = int(target_buffer_seconds / max(1.0, duration_total) * 100)
+            log_cb("流式渲染", f"⚡ 动态计算开播门槛：切分 {total} 个时间窗，设定首批缓冲目标为 {target_buffer_seconds:.0f} 秒 (约 {buffer_mins} 分钟，占全片 {buffer_ratio_pct}%)，满足后开播...", "info")
+            await _update_meta_async(task_id, stage=TaskStage.SYNTHESIZING.value,
                          total_chunks=total, completed_chunks=0, rendered_seconds=0.0,
-                         chunks=[], message="首段极速渲染中")
+                         chunks=[], message=f"首批 {buffer_mins} 分钟缓冲极速渲染中")
+
+            # 全片只分句一次，预加载与各时间窗共用同一批 utterance，保证 TTS 缓存哈希一致。
+            preload_task = asyncio.create_task(
+                tts.preload_all_tts(
+                    task_dir, segments, req.voice, mimo_api_key,
+                    log_cb=log_cb, utterances=global_utterances,
+                )
+            )
 
             manifest: list[dict] = []
             chunk_paths: list[Path] = []
-            for i, (w_start, w_end, _w_utterances) in enumerate(windows):
-                chunk_path = task_dir / f"chunk_{i:03d}.mp4"
-                w_dur = max(0.1, w_end - w_start)
-                rel_segs = _relative_segments_for_window(segments, w_start, w_end)
-                chunk_utterances = tts.slice_utterances_for_window(
-                    global_utterances, w_start, w_end,
-                )
-
-                # 检查该 chunk 是否已在先前的渲染中成功合成过
-                if chunk_path.exists() and chunk_path.stat().st_size > 1000:
-                    log_cb("流式渲染", f"⚡ 时间窗 {i+1}/{total} 发现已渲染的 chunk_{i:03d}.mp4 缓存，秒级复用", "success")
-                else:
-                    await tts.synthesize_all(
-                        task_dir, rel_segs, req.voice, mimo_api_key,
-                        log_cb=log_cb, out_filename=f"dub_{i:03d}.wav",
-                        track_duration=w_dur,
-                        utterances=chunk_utterances,
-                    )
-                    chunk_path = await mixer.merge_chunk(
-                        task_dir, video_path, rel_segs, w_start, w_dur, i,
-                        original_volume=orig_vol,
+            try:
+                for i, (w_start, w_end, _w_utterances) in enumerate(windows):
+                    chunk_path = task_dir / f"chunk_{i:03d}.mp4"
+                    w_dur = max(0.1, w_end - w_start)
+                    rel_segs = _relative_segments_for_window(segments, w_start, w_end)
+                    chunk_utterances = tts.slice_utterances_for_window(
+                        global_utterances, w_start, w_end,
                     )
 
-                chunk_paths.append(chunk_path)
-                manifest.append({
-                    "index": i,
-                    "start": round(w_start, 3),
-                    "end": round(w_end, 3),
-                    "duration": round(w_dur, 3),
-                    "url": f"/api/task/{task_id}/chunk/{i}",
-                })
-                completed = i + 1
-                progress = min(95, 45 + int(50 * completed / max(1, total)))
-                update_kwargs: dict = dict(
-                    completed_chunks=completed,
-                    rendered_seconds=round(w_end, 3),
-                    chunks=list(manifest),
-                    progress=progress,
-                    message=f"后台实时渲染中 ({completed}/{total} 段)",
-                )
-                if i == 0 or not _read_meta(task_id).get("preview_ready"):
-                    update_kwargs.update(
-                        preview_ready=True,
-                        preview_url=f"/api/task/{task_id}/chunk/0",
-                        preview_duration=round(w_dur, 3),
-                    )
-                    if i == 0:
-                        log_cb("⚡ 首段就绪", f"🎉 首个约 {int(w_dur)} 秒时间窗已渲染完成，播放器立即开播；后续片段将在您观看时无感续渲。", "success")
-                _update_meta(task_id, **update_kwargs)
+                    # 检查该 chunk 是否已在先前的渲染中成功合成过
+                    if await _reusable_rendered_mp4(chunk_path):
+                        log_cb("流式渲染", f"⚡ 时间窗 {i+1}/{total} 发现已渲染的 chunk_{i:03d}.mp4 缓存，秒级复用", "success")
+                    else:
+                        await tts.synthesize_all(
+                            task_dir, rel_segs, req.voice, mimo_api_key,
+                            log_cb=log_cb, out_filename=f"dub_{i:03d}.wav",
+                            track_duration=w_dur,
+                            utterances=chunk_utterances,
+                        )
+                        chunk_path = await mixer.merge_chunk(
+                            task_dir, video_path, rel_segs, w_start, w_dur, i,
+                            original_volume=orig_vol,
+                        )
 
-            _update_meta(task_id, stage=TaskStage.MIXING.value, progress=97,
+                    chunk_paths.append(chunk_path)
+                    manifest.append({
+                        "index": i,
+                        "start": round(w_start, 3),
+                        "end": round(w_end, 3),
+                        "duration": round(w_dur, 3),
+                        "url": f"/api/task/{task_id}/chunk/{i}",
+                    })
+                    completed = i + 1
+                    progress = min(95, 45 + int(50 * completed / max(1, total)))
+                    update_kwargs: dict = dict(
+                        completed_chunks=completed,
+                        rendered_seconds=round(w_end, 3),
+                        chunks=list(manifest),
+                        progress=progress,
+                        message=f"后台实时渲染中 ({completed}/{total} 段)",
+                    )
+
+                    current_rendered = round(w_end, 3)
+                    already_preview_ready = _read_meta(task_id).get("preview_ready", False)
+                    if not already_preview_ready and (current_rendered >= target_buffer_seconds or i == total - 1):
+                        cur_mins = round(current_rendered / 60.0, 1)
+                        pct = int(current_rendered / max(1.0, duration_total) * 100)
+                        update_kwargs.update(
+                            preview_ready=True,
+                            preview_url=f"/api/task/{task_id}/chunk/0",
+                            preview_duration=current_rendered,
+                        )
+                        log_cb("⚡ 首批就绪", f"🎉 首批约 {cur_mins} 分钟 ({int(current_rendered)} 秒 / 占全片 {pct}%) 动态缓冲已渲染完成，播放器立即开播；后续内容已在后台无感续渲。", "success")
+                    await _update_meta_async(task_id, **update_kwargs)
+            finally:
+                if not preload_task.done():
+                    preload_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await preload_task
+
+            await _update_meta_async(task_id, stage=TaskStage.MIXING.value, progress=97,
                          message="合并完整成片中")
             final_src = task_dir / "final.mp4"
-            if final_src.exists() and final_src.stat().st_size > 1000:
+            if await _reusable_rendered_mp4(final_src):
                 log_cb("视频合并", "⚡ 发现已有完整成片 final.mp4 缓存，秒级导出就绪", "success")
             else:
                 log_cb("视频合并", "全部时间窗渲染完成，正在无损拼接为完整成片 final.mp4...")
@@ -617,23 +667,23 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                 log_cb("视频合并", "高清成片渲染完毕，输出 final.mp4 导出准备就绪", "success")
         else:
             # ---- 批处理模式：一次性渲染全片（无流式预览） ----
-            _update_meta(task_id, stage=TaskStage.SYNTHESIZING.value, progress=85,
+            await _update_meta_async(task_id, stage=TaskStage.SYNTHESIZING.value, progress=85,
                          message="全片语音合成中")
             log_cb("音色合成", f"正在配置 MiMo 音色引擎 [{req.voice}] 补全全片配音合成...", "api")
             await tts.synthesize_all(task_dir, segments, req.voice, mimo_api_key, log_cb=log_cb)
             log_cb("音色合成", "目标语言全片语音合成完成，音色与情感拟真度匹配正常", "success")
 
-            _update_meta(task_id, stage=TaskStage.MIXING.value, progress=95,
+            await _update_meta_async(task_id, stage=TaskStage.MIXING.value, progress=95,
                          message="合成全片视频中")
             final_src = task_dir / "final.mp4"
-            if final_src.exists() and final_src.stat().st_size > 1000:
+            if await _reusable_rendered_mp4(final_src):
                 log_cb("视频合并", "⚡ 发现已有完整成片 final.mp4 缓存，秒级导出就绪", "success")
             else:
                 log_cb("视频合并", "启动 FFmpeg 全片画面、配音音轨与字幕轨高精度合并...")
                 await mixer.merge(task_dir, video_path, segments, original_volume=orig_vol)
                 log_cb("视频合并", "高清成片渲染完毕，输出 final.mp4 导出准备就绪", "success")
 
-        _update_meta(task_id, stage=TaskStage.COMPLETE.value, progress=100,
+        await _update_meta_async(task_id, stage=TaskStage.COMPLETE.value, progress=100,
                      message="完成", error=None)
         log_cb("系统", "🎉 视译宝转译流程全部顺利完成！", "success")
 
@@ -655,12 +705,12 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             except Exception as exc:  # noqa: BLE001 - 归档失败不得导致任务失败
                 log_cb("自动归档", f"输出目录自动归档失败: {exc}", "error")
     except asyncio.CancelledError:
-        _update_meta(task_id, stage=TaskStage.ERROR.value, message="任务被手动取消", error="Task cancelled")
+        await _update_meta_async(task_id, stage=TaskStage.ERROR.value, message="任务被手动取消", error="Task cancelled")
         log_cb("系统", "任务被手动取消", "error")
         raise
     except Exception as exc:  # noqa: BLE001 - 将所有失败反馈给客户端
         err_msg = str(exc)
-        _update_meta(task_id, stage=TaskStage.ERROR.value, message="处理失败", error=err_msg)
+        await _update_meta_async(task_id, stage=TaskStage.ERROR.value, message="处理失败", error=err_msg)
         # 这里既可能是外部接口报错，也可能是本地流程异常，文案不要一律写成客户端错误。
         is_network = "429" in err_msg or "http" in err_msg.lower()
         log_cb(
@@ -672,12 +722,12 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
 
 async def _run_pipeline(task_id: str, req: TaskStartRequest) -> None:
     if task_limiter.locked:
-        _update_meta(task_id, stage=TaskStage.PENDING.value, progress=0,
+        await _update_meta_async(task_id, stage=TaskStage.PENDING.value, progress=0,
                      message="等待空闲处理槽位")
-        _append_log(task_id, "任务调度", f"并发槽位已满，进入队列等待（上限 {task_limiter.limit} 个任务）")
+        _offload_log(task_id, "任务调度", f"并发槽位已满，进入队列等待（上限 {task_limiter.limit} 个任务）")
 
     async with task_limiter.slot():
-        _append_log(task_id, "任务调度", f"已获得处理槽位，当前并发上限 {task_limiter.limit}", "success")
+        _offload_log(task_id, "任务调度", f"已获得处理槽位，当前并发上限 {task_limiter.limit}", "success")
         await _execute_pipeline(task_id, req)
 
 
@@ -699,7 +749,7 @@ async def start_task(task_id: str, req: TaskStartRequest) -> TaskStatusResponse:
     if active_task is not None and not active_task.done():
         raise HTTPException(status_code=409, detail="task is already running")
 
-    _update_meta(task_id, stage=TaskStage.PENDING.value, progress=0,
+    await _update_meta_async(task_id, stage=TaskStage.PENDING.value, progress=0,
                  message="已开始", error=None, source_lang=req.source_lang, target_lang=req.target_lang,
                  voice=req.voice, gemini_model=req.gemini_model, original_audio_volume=req.original_audio_volume,
                  gemini_api_url=req.gemini_api_url, gemini_api_format=req.gemini_api_format)
@@ -729,7 +779,7 @@ async def list_tasks() -> list[dict]:
                     meta["video_title"] = derived
                     # 落库一次，避免 /api/tasks 每次轮询都重新扫描解析整份字幕文件。
                     try:
-                        _update_meta(meta["task_id"], video_title=derived)
+                        await _update_meta_async(meta["task_id"], video_title=derived)
                     except Exception:
                         pass
             tasks.append(meta)
@@ -1004,7 +1054,7 @@ async def create_task_from_url(req: FromUrlRequest) -> UploadResponse:
         "progress": 0,
         "message": "等待下载视频",
         "error": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     (task_dir / "task.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1037,7 +1087,7 @@ async def register_local_task(req: RegisterLocalRequest, request: Request) -> Up
         "progress": 0,
         "message": "",
         "error": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     (task_dir / "task.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"

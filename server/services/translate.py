@@ -1,8 +1,8 @@
 import asyncio
-from collections.abc import Callable
 import json
 import logging
 import random
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -94,12 +94,55 @@ def _extract_json_array(text: str) -> list:
             s = rest
         s = s.rsplit("```", 1)[0].strip()
     try:
-        return json.loads(s)
+        parsed = json.loads(s)
     except json.JSONDecodeError:
         start, end = s.find("["), s.rfind("]")
         if start != -1 and end > start:
-            return json.loads(s[start:end + 1])
-        raise
+            parsed = json.loads(s[start:end + 1])
+        else:
+            raise
+    return parsed if isinstance(parsed, list) else []
+
+
+def _segment_id(seg: dict, fallback: int) -> int:
+    try:
+        return int(seg.get("index", fallback))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def align_batch_translations(
+    batch: list[dict],
+    translations: object,
+    batch_start: int = 0,
+) -> dict[int, str]:
+    """按字幕 ID 对齐批量翻译结果，避免漏译/合译造成后续整片错位。"""
+    mapped: dict[int, str] = {}
+    if not isinstance(translations, list) or not translations:
+        return mapped
+
+    if all(isinstance(item, dict) for item in translations):
+        for item in translations:
+            try:
+                seg_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            text = str(item.get("text") or "").strip()
+            if text:
+                mapped[seg_id] = text
+        return mapped
+
+    if all(isinstance(item, str) for item in translations):
+        if len(translations) != len(batch):
+            return mapped
+        for offset, (seg, text) in enumerate(zip(batch, translations)):
+            cleaned = str(text or "").strip()
+            if not cleaned:
+                continue
+            mapped[_segment_id(seg, batch_start + offset)] = cleaned
+        return mapped
+
+    return mapped
 
 
 def pick_api_key(raw_key: str, index: int = 0) -> str:
@@ -298,24 +341,24 @@ async def translate_subtitles(
     """
     target_lang_name = LANG_NAMES.get(target_lang, "Chinese")
     source_lang_name = LANG_NAMES.get(source_lang, None) if source_lang and source_lang != "auto" else None
+    json_shape = (
+        'Return ONLY a JSON array of objects: [{"id": <int>, "text": "<translation>"}, ...]. '
+        "Each id must match the corresponding input segment id. "
+        "Never merge, split, omit, or reorder items. "
+        "Use natural target-language punctuation for speech: finish complete thoughts "
+        "with sentence-ending punctuation, but leave a comma after a fragment that "
+        "clearly continues into the next item. Never add line breaks inside an item."
+    )
 
     if source_lang_name:
         system_prompt = (
             "You are a professional subtitle translator. Translate the following "
-            f"subtitle segments from {source_lang_name} to {target_lang_name}. Return ONLY a JSON array of translated "
-            "strings, one per input segment. Preserve the exact item count and order. "
-            "Use natural target-language punctuation for speech: finish complete thoughts "
-            "with sentence-ending punctuation, but leave a comma after a fragment that "
-            "clearly continues into the next item. Never add line breaks inside an item."
+            f"subtitle segments from {source_lang_name} to {target_lang_name}. {json_shape}"
         )
     else:
         system_prompt = (
             "You are a professional subtitle translator. Translate the following "
-            f"subtitle segments to {target_lang_name}. Return ONLY a JSON array of translated "
-            "strings, one per input segment. Preserve the exact item count and order. "
-            "Use natural target-language punctuation for speech: finish complete thoughts "
-            "with sentence-ending punctuation, but leave a comma after a fragment that "
-            "clearly continues into the next item. Never add line breaks inside an item."
+            f"subtitle segments to {target_lang_name}. {json_shape}"
         )
 
     performance = get_performance_settings()
@@ -338,8 +381,13 @@ async def translate_subtitles(
         ),
     ) as client:
         async def translate_batch(batch_start: int, batch: list[dict]) -> tuple[int, list[dict], list]:
-            source_texts = [seg["source_text"] for seg in batch]
-            user_prompt = json.dumps(source_texts, ensure_ascii=False)
+            user_prompt = json.dumps(
+                [
+                    {"id": _segment_id(seg, batch_start + i), "text": seg["source_text"]}
+                    for i, seg in enumerate(batch)
+                ],
+                ensure_ascii=False,
+            )
 
             translations: list = []
             async with translate_limiter.slot():
@@ -360,6 +408,10 @@ async def translate_subtitles(
 
                     try:
                         resp = await client.post(url, headers=headers, json=body)
+                        if resp.status_code in (401, 403):
+                            raise RuntimeError(
+                                f"AI 凭据无效 (HTTP {resp.status_code})，请检查 API Key 后重试"
+                            )
                         if resp.status_code == 429 or resp.status_code >= 500:
                             raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
                         resp.raise_for_status()
@@ -418,9 +470,10 @@ async def translate_subtitles(
 
         fallback_count = 0
         for batch_start, batch, translations in sorted(results, key=lambda item: item[0]):
+            mapped = align_batch_translations(batch, translations, batch_start)
             for i, seg in enumerate(batch):
                 idx = batch_start + i + 1
-                translated = str(translations[i]) if i < len(translations) and translations[i] else ""
+                translated = mapped.get(_segment_id(seg, batch_start + i), "")
                 if translated:
                     seg["translated_text"] = translated
                     seg["translated_fallback"] = False

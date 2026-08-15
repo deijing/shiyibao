@@ -1,10 +1,9 @@
-from pathlib import Path
 import re
+from pathlib import Path
 
-from .audio import get_subtitle_burn_filter, has_audio_stream, probe_duration, run_ffmpeg
-from .hwaccel import run_ffmpeg_video_encode
 from ..config import SUBTITLE_FONT
-
+from .audio import get_subtitle_burn_filter, has_audio_stream, is_playable_mp4, probe_duration, run_ffmpeg
+from .hwaccel import run_ffmpeg_video_encode
 
 ASS_BASE_FONT_SIZE = 56
 ASS_MIN_FONT_SIZE = 24
@@ -111,8 +110,12 @@ def _escape_filter_path(path: Path) -> str:
 
 
 def _escape_concat_path(path: Path) -> str:
-    """为 concat demuxer 生成安全路径（正斜杠 + 单引号转义）。"""
-    value = path.resolve().as_posix().replace("'", r"'\''")
+    """为 concat demuxer 列表文件转义路径。
+
+    concat 协议在单引号内用 ``\\'`` 表示撇号，不是 shell 的 ``'\\''``。
+    任务目录或文件名含 ``Tom's Video.mp4`` 时必须按 demuxer 规则转义。
+    """
+    value = path.resolve().as_posix().replace("\\", "\\\\").replace("'", r"\'")
     return value
 
 
@@ -275,7 +278,18 @@ async def concat_chunks(task_dir: Path, chunk_paths: list[Path]) -> Path:
     """无损拼接已渲染的 chunk，生成最终可下载视频。"""
     out_path = task_dir / "final.mp4"
     list_file = task_dir / "chunks_concat.txt"
-    lines = [f"file '{_escape_concat_path(p)}'" for p in chunk_paths if p.exists()]
+    valid_paths: list[Path] = []
+    broken: list[str] = []
+    for chunk_path in chunk_paths:
+        if await is_playable_mp4(chunk_path):
+            valid_paths.append(chunk_path)
+        else:
+            broken.append(chunk_path.name)
+    if broken:
+        raise RuntimeError("存在损坏的视频分片，已拒绝无损拼接: " + ", ".join(broken))
+    if not valid_paths:
+        raise RuntimeError("没有可拼接的有效视频分片")
+    lines = [f"file '{_escape_concat_path(p)}'" for p in valid_paths]
     list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     await run_ffmpeg([
         "-f", "concat", "-safe", "0", "-i", str(list_file),

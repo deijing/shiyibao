@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useMemo, memo } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   Download, ChevronDown, Check,
   Play, Pause, Volume2, VolumeX, Captions, Maximize, Video, Type, AudioWaveform,
@@ -199,7 +200,7 @@ interface SubtitleItemCardProps {
   isActive: boolean
   subtitleDisplayMode: 'dual' | 'target' | 'source'
   onSeek: (time: number) => void
-  itemRef: (el: HTMLDivElement | null) => void
+  itemRef?: (el: HTMLDivElement | null) => void
 }
 
 const SubtitleItemCard = memo(function SubtitleItemCard({
@@ -377,25 +378,28 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
     (seg) => currentTime >= seg.start && currentTime <= seg.end
   )
 
+  // 虚拟化渲染引擎，优化超长视频（1000+ 字幕）的列表重绘与内存占用
+  const rowVirtualizer = useVirtualizer({
+    count: filteredSubtitles.length,
+    getScrollElement: () => subListRef.current,
+    estimateSize: () => 100,
+    overscan: 6,
+  })
+
   // 当视频播放时间变动时，右侧对应字幕在字幕列表容器内部平滑滑动居中定位 (绝对隔离外层 window，禁止连带滚动整个页面)
   useEffect(() => {
     if (!autoScrollSubtitles || activeSubIndex === -1 || rightPanelTab !== 'subtitles') return
     if (lastScrolledIndex.current === activeSubIndex) return
 
-    const container = subListRef.current
-    const targetEl = subItemRefs.current.get(activeSubIndex)
-    if (targetEl && container) {
-      const containerRect = container.getBoundingClientRect()
-      const targetRect = targetEl.getBoundingClientRect()
-      const offset = targetRect.top - containerRect.top - container.clientHeight / 2 + targetRect.height / 2
-
-      container.scrollTo({
-        top: container.scrollTop + offset,
+    const targetIdx = filteredSubtitles.findIndex((s) => s.index === activeSubIndex)
+    if (targetIdx !== -1) {
+      rowVirtualizer.scrollToIndex(targetIdx, {
+        align: 'center',
         behavior: 'smooth',
       })
       lastScrolledIndex.current = activeSubIndex
     }
-  }, [activeSubIndex, autoScrollSubtitles, rightPanelTab])
+  }, [activeSubIndex, autoScrollSubtitles, rightPanelTab, filteredSubtitles, rowVirtualizer])
 
   // 执行 AI 分析与提炼
   const handleRunAIAnalysis = async (mode: 'summary' | 'study_notes' | 'qa' | 'custom', customPrompt?: string) => {
@@ -1483,22 +1487,42 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                   </div>
                 </div>
 
-                {/* 动态同步滚动白底字幕列表 */}
-                <div ref={subListRef} className="flex-1 overflow-y-auto p-4 space-y-2.5 custom-scrollbar">
+                {/* 动态同步虚拟化滚动白底字幕列表 */}
+                <div ref={subListRef} className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                   {filteredSubtitles.length > 0 ? (
-                    filteredSubtitles.map((seg) => (
-                      <SubtitleItemCard
-                        key={seg.index}
-                        seg={seg}
-                        isActive={activeSubIndex === seg.index}
-                        subtitleDisplayMode={subtitleDisplayMode}
-                        onSeek={handleSeek}
-                        itemRef={(el) => {
-                          if (el) subItemRefs.current.set(seg.index, el)
-                          else subItemRefs.current.delete(seg.index)
-                        }}
-                      />
-                    ))
+                    <div
+                      style={{
+                        height: `${rowVirtualizer.getTotalSize()}px`,
+                        width: '100%',
+                        position: 'relative',
+                      }}
+                    >
+                      {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                        const seg = filteredSubtitles[virtualRow.index]
+                        return (
+                          <div
+                            key={seg.index}
+                            data-index={virtualRow.index}
+                            ref={rowVirtualizer.measureElement}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              transform: `translateY(${virtualRow.start}px)`,
+                              paddingBottom: '10px',
+                            }}
+                          >
+                            <SubtitleItemCard
+                              seg={seg}
+                              isActive={activeSubIndex === seg.index}
+                              subtitleDisplayMode={subtitleDisplayMode}
+                              onSeek={handleSeek}
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs py-10 space-y-2">
                       <Type className="w-8 h-8 stroke-1 text-slate-300 dark:text-slate-600" />

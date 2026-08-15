@@ -123,9 +123,7 @@ async def test_gemini_key(req: KeyTestRequest):
                     pass
                 raise HTTPException(status_code=400, detail=f"{fmt} API 校验失败: {detail}")
         except httpx.RequestError as e:
-            if len(key) >= 8:
-                return {"status": "ok", "message": f"{fmt} API Key 结构校验通过，通信就绪！"}
-            raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}")
+            raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}") from e
 
 
 @router.post("/models/gemini")
@@ -169,7 +167,7 @@ async def get_gemini_models(req: KeyTestRequest):
                 else:
                     raise HTTPException(status_code=400, detail=f"拉取 OpenAI 模型失败 (HTTP {resp.status_code})")
             except httpx.RequestError as e:
-                raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}")
+                raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}") from e
 
     elif fmt == "Anthropic":
         default_base = "https://api.anthropic.com"
@@ -239,7 +237,7 @@ async def get_gemini_models(req: KeyTestRequest):
                         pass
                     raise HTTPException(status_code=400, detail=f"获取 Gemini 模型列表失败: {detail}")
             except httpx.RequestError as e:
-                raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}")
+                raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}") from e
 
 
 
@@ -268,7 +266,5 @@ async def test_xiaomi_key(req: KeyTestRequest):
                 return {"status": "ok", "message": "小米 TTS Key 校验通过！语音合成服务可调用。"}
             else:
                 raise HTTPException(status_code=400, detail=f"小米 TTS Key 校验失败 (HTTP {resp.status_code})")
-        except httpx.RequestError:
-            if len(key) >= 4:
-                return {"status": "ok", "message": "小米 TTS Key 结构校验通过！"}
-            raise HTTPException(status_code=502, detail="网络连接超时，服务不可达")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"网络连接超时，服务不可达: {e}") from e

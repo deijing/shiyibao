@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from typing import Sequence
+from collections.abc import Sequence
 
 import httpx
 
@@ -23,7 +23,7 @@ LANG_CODE_TO_NAME = {
 # 拉丁字母语言的常见停用词
 _LATIN_STOPWORDS = {
     "en": {"the", "be", "to", "of", "and", "in", "that", "have", "it", "for", "not", "on", "with", "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", "say", "her", "she", "or", "an", "will", "my", "one", "all", "would", "there", "their", "what", "so", "up", "out", "if", "about", "who", "get", "which", "go", "me", "is", "are", "was", "were"},
-    "fr": {"le", "la", "les", "des", "un", "une", "est", "et", "du", "en", "que", "pour", "pas", "dans", "ce", "qui", "ne", "sur", "se", "plus", "par", "avec", "tout", "faire", "son", "sa", "ses", "nous", "vous", "ils", "elles", "mais", "ou", "donc", "car", "bienvenue", "cette", "sur"},
+    "fr": {"le", "la", "les", "des", "un", "une", "est", "et", "du", "en", "que", "pour", "pas", "dans", "ce", "qui", "ne", "sur", "se", "plus", "par", "avec", "tout", "faire", "son", "sa", "ses", "nous", "vous", "ils", "elles", "mais", "ou", "donc", "car", "bienvenue", "cette"},
     "de": {"der", "die", "das", "und", "ist", "in", "den", "von", "zu", "mit", "sich", "des", "auf", "für", "im", "dem", "nicht", "ein", "eine", "einer", "einem", "einen", "eines", "als", "auch", "es", "an", "er", "hat", "dass", "sie", "nach", "wie", "wir", "willkommen", "diesem", "über"},
     "es": {"el", "la", "los", "las", "un", "una", "unos", "unas", "es", "y", "en", "de", "que", "por", "para", "con", "no", "se", "su", "sus", "al", "del", "como", "más", "pero", "le", "ya", "o", "este", "esta", "estos", "estas", "sí", "porque", "hola", "todos", "bienvenidos", "sobre", "a"},
 }
@@ -31,34 +31,40 @@ _LATIN_STOPWORDS = {
 
 def rule_based_detect_language(text: str) -> tuple[str, str]:
     """使用文本字符模式和停用词检测语言代码（zh、en、ja、ko、fr、de、es、ru）。"""
+    code, name, _confident = rule_based_detect_language_ex(text)
+    return code, name
+
+
+def rule_based_detect_language_ex(text: str) -> tuple[str, str, bool]:
+    """规则检测，并返回是否达到可跳过 LLM 的置信度。"""
     if not text or not text.strip():
-        return "en", LANG_CODE_TO_NAME["en"]
+        return "en", LANG_CODE_TO_NAME["en"], False
 
     clean_text = text.strip()
 
     # 1. 检查日语平假名/片假名
     if re.search(r"[\u3040-\u309f\u30a0-\u30ff]", clean_text):
-        return "ja", LANG_CODE_TO_NAME["ja"]
+        return "ja", LANG_CODE_TO_NAME["ja"], True
 
     # 2. 检查韩语谚文
     if re.search(r"[\uac00-\ud7af\u3130-\u318f]", clean_text):
-        return "ko", LANG_CODE_TO_NAME["ko"]
+        return "ko", LANG_CODE_TO_NAME["ko"], True
 
     # 3. 检查西里尔字母/俄语
     cyrillic_chars = len(re.findall(r"[\u0400-\u04ff]", clean_text))
     if cyrillic_chars > 3:
-        return "ru", LANG_CODE_TO_NAME["ru"]
+        return "ru", LANG_CODE_TO_NAME["ru"], True
 
     # 4. 检查中文 CJK 字符
     cjk_chars = len(re.findall(r"[\u4e00-\u9fa5]", clean_text))
     total_letters = len(re.findall(r"\w", clean_text))
     if cjk_chars > 0 and (total_letters == 0 or (cjk_chars / max(1, total_letters)) > 0.15 or cjk_chars >= 5):
-        return "zh", LANG_CODE_TO_NAME["zh"]
+        return "zh", LANG_CODE_TO_NAME["zh"], True
 
     # 5. 拉丁字母语言检测（en、fr、de、es）
     words = [w.lower() for w in re.findall(r"[a-zA-Záéíóúüñäößàâèêîôûç]+", clean_text)]
     if not words:
-        return "en", LANG_CODE_TO_NAME["en"]
+        return "en", LANG_CODE_TO_NAME["en"], False
 
     scores = {"en": 0, "fr": 0, "de": 0, "es": 0}
 
@@ -77,9 +83,9 @@ def rule_based_detect_language(text: str) -> tuple[str, str]:
 
     best_lang = max(scores, key=lambda k: scores[k])
     if scores[best_lang] > 0:
-        return best_lang, LANG_CODE_TO_NAME[best_lang]
+        return best_lang, LANG_CODE_TO_NAME[best_lang], scores[best_lang] >= 2
 
-    return "en", LANG_CODE_TO_NAME["en"]
+    return "en", LANG_CODE_TO_NAME["en"], False
 
 
 async def detect_language_with_gemini(
@@ -142,6 +148,10 @@ async def detect_language_from_text(
     if not full_text.strip():
         return "en", LANG_CODE_TO_NAME["en"]
 
+    rule_code, rule_name, confident = rule_based_detect_language_ex(full_text)
+    if confident:
+        return rule_code, rule_name
+
     if gemini_api_key:
         gemini_res = await detect_language_with_gemini(
             full_text,
@@ -153,4 +163,4 @@ async def detect_language_from_text(
         if gemini_res:
             return gemini_res
 
-    return rule_based_detect_language(full_text)
+    return rule_code, rule_name

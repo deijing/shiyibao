@@ -52,3 +52,9 @@ def test_common_install_location_is_used_when_gui_path_is_minimal(
     monkeypatch.setattr(audio, "_common_media_dirs", lambda: [tmp_path])
 
     assert audio.find_media_binary("ffprobe") == str(executable)
+
+
+def test_parent_process_alive_detects_self_and_missing() -> None:
+    assert main._parent_process_alive(os.getpid())
+    assert not main._parent_process_alive(1)
+    assert not main._parent_process_alive(0)

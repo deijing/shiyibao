@@ -1,11 +1,11 @@
 import asyncio
 import base64
-from collections.abc import Callable
 import hashlib
 import logging
 import re
 import shutil
 import wave
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -194,7 +194,8 @@ def slice_utterances_for_window(
     """把全局 utterance 映射到时间窗的相对时间轴。
 
     只纳入「在本窗内开始」的语句，避免跨窗把同一段配音再铺一遍。
-    分片窗口应按 utterance 扩展，使语句结束时间落在同一窗内。
+    保留原文案与 index 以便命中同一 TTS 缓存；分片窗口应按 utterance 扩展，
+    使语句结束时间落在同一窗内。
     """
     sliced: list[dict] = []
     for utterance in utterances:
@@ -333,10 +334,141 @@ async def _assemble_track(
         shutil.rmtree(parts_dir, ignore_errors=True)
 
 
+_in_flight_events: dict[Path, asyncio.Event] = {}
+_in_flight_lock = asyncio.Lock()
+
+
 def _tts_cache_path(seg_dir: Path, seg_idx: int, voice: str, text: str) -> Path:
     """按 音色+文案 内容寻址，避免重跑任务复用过期缓存。"""
-    digest = hashlib.sha256(f"{voice}\0{text}".encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(f"{voice}\0{text}".encode()).hexdigest()[:16]
     return seg_dir / f"{int(seg_idx):03d}_{digest}.wav"
+
+
+async def _synthesize_single_utterance(
+    client: httpx.AsyncClient,
+    seg_dir: Path,
+    idx_0: int,
+    seg: dict,
+    voice: str,
+    api_key: str,
+    total_count: int,
+    log_cb: Callable[..., None] | None = None,
+) -> tuple[float, float, Path] | None:
+    text = str(seg.get("translated_text", "")).strip()
+    if not text:
+        return None
+    seg_idx = seg.get("index", idx_0)
+    wav_path = _tts_cache_path(seg_dir, int(seg_idx), voice, text)
+
+    if wav_path.exists() and wav_path.stat().st_size > 100:
+        return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
+
+    async with _in_flight_lock:
+        if wav_path.exists() and wav_path.stat().st_size > 100:
+            return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
+        if wav_path in _in_flight_events:
+            event = _in_flight_events[wav_path]
+            is_owner = False
+        else:
+            event = asyncio.Event()
+            _in_flight_events[wav_path] = event
+            is_owner = True
+
+    if not is_owner:
+        await event.wait()
+        if wav_path.exists() and wav_path.stat().st_size > 100:
+            return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
+
+    body = {
+        "model": MIMO_MODEL,
+        "messages": [
+            {"role": "user", "content": ""},
+            {"role": "assistant", "content": text},
+        ],
+        "audio": {"format": "wav", "voice": voice},
+    }
+
+    try:
+        for attempt in range(MAX_RETRIES):
+            async with tts_limiter.slot():
+                try:
+                    resp = await client.post(
+                        MIMO_API_URL,
+                        headers={"api-key": api_key, "Content-Type": "application/json"},
+                        json=body,
+                    )
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
+                    resp.raise_for_status()
+                    wav_path.write_bytes(_extract_audio_bytes(resp))
+                    if log_cb:
+                        source_range = seg.get("source_indices", [seg.get("index", idx_0)])
+                        log_cb("音色合成", f"语义段 [{idx_0 + 1}/{total_count}] (原字幕 {source_range[0] + 1}-{source_range[-1] + 1}) \"{text}\" 合成成功 (音色: {voice}, 格式: 44.1kHz WAV)", "api")
+                    return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
+                except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError, TtsResponseError) as exc:
+                    detail = (
+                        f"MiMo 未返回音频，可能触发内容审核或额度不足 → {exc}"
+                        if isinstance(exc, TtsResponseError) else str(exc)
+                    )
+                    if attempt == MAX_RETRIES - 1:
+                        if log_cb:
+                            log_cb("音色合成", f"句 [{idx_0 + 1}/{total_count}] 合成失败: {detail}", "error")
+                        raise RuntimeError(f"MiMo TTS 段落 {seg['index']} 合成失败 (已重试 {MAX_RETRIES} 次): {detail}") from exc
+                    wait = RETRY_BACKOFF_BASE ** (attempt + 1)
+                    logger.warning("MiMo TTS 第 %d 次重试 (段落 %d)，等待 %.1fs: %s", attempt + 1, seg["index"], wait, detail)
+                    if log_cb:
+                        log_cb("音色合成", f"合成重试中 [{attempt + 1}/{MAX_RETRIES}] (句 {idx_0 + 1})...", "api")
+
+            await asyncio.sleep(wait)
+        return None
+    finally:
+        if is_owner:
+            async with _in_flight_lock:
+                event.set()
+                _in_flight_events.pop(wav_path, None)
+
+
+async def preload_all_tts(
+    task_dir: Path,
+    segments: list[dict],
+    voice: str,
+    api_key: str,
+    log_cb: Callable[..., None] | None = None,
+    utterances: list[dict] | None = None,
+) -> int:
+    """在后台并发预加载全片所有 utterance 的配音切片存入 tts_segments/ 目录。"""
+    seg_dir = task_dir / "tts_segments"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+
+    if utterances is None:
+        utterances = _build_tts_utterances(segments)
+    total_count = len(utterances)
+    if not utterances:
+        return 0
+
+    performance = get_performance_settings()
+    async with httpx.AsyncClient(
+        timeout=120.0,
+        limits=httpx.Limits(
+            max_connections=performance.tts_concurrency,
+            max_keepalive_connections=performance.tts_concurrency,
+        ),
+    ) as client:
+        tasks = [
+            asyncio.create_task(_synthesize_single_utterance(client, seg_dir, idx_0, seg, voice, api_key, total_count, log_cb))
+            for idx_0, seg in enumerate(utterances)
+        ]
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            for item in tasks:
+                item.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        success_count = sum(1 for r in results if isinstance(r, tuple) and r is not None)
+        if log_cb and success_count > 0:
+            log_cb("音色预加载", f"⚡ 全片 {success_count}/{total_count} 条配音切片已在后台并发预加载就绪", "success")
+        return success_count
 
 
 async def synthesize_all(
@@ -364,63 +496,8 @@ async def synthesize_all(
             max_keepalive_connections=performance.tts_concurrency,
         ),
     ) as client:
-        async def synthesize_segment(idx_0: int, seg: dict) -> tuple[float, float, Path] | None:
-            text = str(seg.get("translated_text", "")).strip()
-            if not text:
-                return None
-            body = {
-                "model": MIMO_MODEL,
-                "messages": [
-                    {"role": "user", "content": ""},
-                    {"role": "assistant", "content": text},
-                ],
-                "audio": {"format": "wav", "voice": voice},
-            }
-            seg_idx = seg.get("index", idx_0)
-            wav_path = _tts_cache_path(seg_dir, int(seg_idx), voice, text)
-            if wav_path.exists() and wav_path.stat().st_size > 100:
-                return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
-
-            for attempt in range(MAX_RETRIES):
-                async with tts_limiter.slot():
-                    try:
-                        resp = await client.post(
-                            MIMO_API_URL,
-                            headers={"api-key": api_key, "Content-Type": "application/json"},
-                            json=body,
-                        )
-                        if resp.status_code == 429 or resp.status_code >= 500:
-                            raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
-                        resp.raise_for_status()
-                        wav_path.write_bytes(_extract_audio_bytes(resp))
-                        if log_cb:
-                            source_range = seg.get("source_indices", [seg.get("index", idx_0)])
-                            log_cb("音色合成", f"语义段 [{idx_0 + 1}/{total_count}] (原字幕 {source_range[0] + 1}-{source_range[-1] + 1}) \"{text}\" 合成成功 (音色: {voice}, 格式: 44.1kHz WAV)", "api")
-                        return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
-                    except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError, TtsResponseError) as exc:
-                        # 异常响应结构往往是上游偶发抖动，重试一次通常就正常了。
-                        detail = (
-                            f"MiMo 未返回音频，可能触发内容审核或额度不足 → {exc}"
-                            if isinstance(exc, TtsResponseError) else str(exc)
-                        )
-                        if attempt == MAX_RETRIES - 1:
-                            if log_cb:
-                                log_cb("音色合成", f"句 [{idx_0 + 1}/{total_count}] 合成失败: {detail}", "error")
-                            raise RuntimeError(f"MiMo TTS 段落 {seg['index']} 合成失败 (已重试 {MAX_RETRIES} 次): {detail}") from exc
-                        wait = RETRY_BACKOFF_BASE ** (attempt + 1)
-                        logger.warning("MiMo TTS 第 %d 次重试 (段落 %d)，等待 %.1fs: %s", attempt + 1, seg["index"], wait, detail)
-                        if log_cb:
-                            log_cb("音色合成", f"合成重试中 [{attempt + 1}/{MAX_RETRIES}] (句 {idx_0 + 1})...", "api")
-
-                # 退避等待放在并发槽之外，否则纯睡眠期间会白占一个 TTS 额度。
-                await asyncio.sleep(wait)
-
-            return None
-
-        # 首个异常就停：Key 失效之类的错误对每一段都会复现，等上百段各自耗尽三次
-        # 重试要拖好几分钟。取消其余任务并等它们收尾，避免留下仍在吃额度的孤儿请求。
         tasks = [
-            asyncio.create_task(synthesize_segment(idx_0, seg))
+            asyncio.create_task(_synthesize_single_utterance(client, seg_dir, idx_0, seg, voice, api_key, total_count, log_cb))
             for idx_0, seg in enumerate(utterances)
         ]
         if tasks:

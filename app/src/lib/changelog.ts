@@ -12,14 +12,41 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.10'
+export const CURRENT_VERSION = 'v0.1.11'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
+  {
+    version: 'v0.1.11',
+    date: '2026-08-15',
+    title: '稳定性加固、断点校验与本地安全防护',
+    isLatest: true,
+    highlights: [
+      '流式断点只复用可探测的完整 MP4，损坏碎片不再把后续拼接打崩',
+      '批量翻译按字幕 ID 对齐，漏译不再造成全片错位；无效 API Key 立即失败',
+      '页面异常可从错误边界恢复，批量页有全局警告时仍能点到启动按钮',
+    ],
+    details: {
+      features: [
+        'Docker Compose 一键启动 Web 控制台，无需本机安装 Python / Node / FFmpeg',
+        '上传大视频显示真实传输进度；成片字幕列表改为虚拟滚动',
+      ],
+      improvements: [
+        '语言检测改为本地规则优先，标准语种不再先打 LLM',
+        '路由按页懒加载，并增加 React 错误边界',
+        '环境检查按当前 AI 协议探测连通性，而不再写死 Gemini 端点',
+      ],
+      fixes: [
+        'FFmpeg concat 路径按 demuxer 规则转义单引号文件名',
+        '跨站请求增加 Sec-Fetch-Site 校验；Tauri 强杀后边车随父进程退出',
+        'TTS 预加载取消时回收子任务；通知列表无变化时避免多余重渲染',
+        'Key 校验不再把“长度看起来像”当成成功',
+      ],
+    },
+  },
   {
     version: 'v0.1.10',
     date: '2026-08-15',
     title: '修复成片配音把同一句话念两遍',
-    isLatest: true,
     highlights: [
       '流式分片改为按配音整句切窗，字幕仍只出现一次，配音不再在相邻分片里复读',
       '重叠的 ASR 短句若文案已被当前语句覆盖，不再额外合成一遍配音',

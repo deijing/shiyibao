@@ -1,7 +1,8 @@
-import asyncio
 import json
 from pathlib import Path
+
 import pytest
+
 from server.models import TaskStartRequest
 from server.routers import task
 
@@ -16,7 +17,7 @@ async def test_checkpoint_resumption_skips_completed_stages(tmp_path: Path, monk
     (task_dir / "input.mp4").write_bytes(b"fake video")
     (task_dir / "audio.aac").write_bytes(b"X" * 500)
     (task_dir / "task.json").write_text(json.dumps({"task_id": task_id, "filename": "input.mp4", "stage": "error"}, ensure_ascii=False), encoding="utf-8")
-    
+
     src_segments = [
         {"index": 0, "start": 0.0, "end": 5.0, "source_text": "Hello world"},
         {"index": 1, "start": 5.0, "end": 10.0, "source_text": "Second line"},
@@ -30,7 +31,8 @@ async def test_checkpoint_resumption_skips_completed_stages(tmp_path: Path, monk
     (task_dir / "subtitles_zh.json").write_text(json.dumps(target_segments, ensure_ascii=False), encoding="utf-8")
 
     # 模拟 chunk_000.mp4 已提前渲染好
-    (task_dir / "chunk_000.mp4").write_bytes(b"X" * 2000)
+    header = b"\x00\x00\x00\x18ftypmp42"
+    (task_dir / "chunk_000.mp4").write_bytes(header + b"X" * 2000)
 
     # 2. 模拟网络 API / FFmpeg 挂钩，验证重跑时是否触发跳过
     called_extract = False
@@ -80,6 +82,11 @@ async def test_checkpoint_resumption_skips_completed_stages(tmp_path: Path, monk
     monkeypatch.setattr(task.tts, "synthesize_all", fake_synthesize_all)
     monkeypatch.setattr(task.mixer, "merge_chunk", fake_merge_chunk)
     monkeypatch.setattr(task.mixer, "concat_chunks", fake_concat)
+
+    async def fake_preload(*_args, **_kwargs) -> int:
+        return 0
+
+    monkeypatch.setattr(task.tts, "preload_all_tts", fake_preload)
 
     # 3. 重新执行管道
     req = TaskStartRequest(

@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, File, UploadFile
@@ -33,7 +33,7 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
         "progress": 0,
         "message": "",
         "error": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     (task_dir / "task.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"

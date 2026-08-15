@@ -1,19 +1,30 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, lazy, Suspense } from 'react'
 import { Routes, Route, useNavigate, useParams, Navigate } from 'react-router-dom'
 import { AlertTriangle, ExternalLink, Loader2 } from 'lucide-react'
 import { useTheme } from './hooks/useTheme'
 import { GithubIcon } from './components/GithubIcon'
 import { ChangelogModal } from './components/ChangelogModal'
 import Navbar from './components/Navbar'
-import UploadState from './components/UploadState'
-import ProcessingState from './components/ProcessingState'
-import ResultState from './components/ResultState'
-import BatchState from './components/BatchState'
-import HistoryView from './components/HistoryView'
-import VoiceLibrary from './components/VoiceLibrary'
-import PerformancePage from './components/PerformancePage'
+import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { getRuntimeHealth, getTaskStatus, type RuntimeHealth, type TaskStatus } from './lib/api'
 import { clearActiveTaskId, loadActiveTaskId, saveActiveTaskId } from './lib/task-session'
+
+const UploadState = lazy(() => import('./components/UploadState'))
+const ProcessingState = lazy(() => import('./components/ProcessingState'))
+const ResultState = lazy(() => import('./components/ResultState'))
+const BatchState = lazy(() => import('./components/BatchState'))
+const HistoryView = lazy(() => import('./components/HistoryView'))
+const VoiceLibrary = lazy(() => import('./components/VoiceLibrary'))
+const PerformancePage = lazy(() => import('./components/PerformancePage'))
+
+function PageFallback() {
+  return (
+    <div className="flex-grow flex flex-col items-center justify-center py-32 text-muted-foreground gap-3">
+      <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+      <p className="text-xs font-medium text-slate-400">正在载入页面模块...</p>
+    </div>
+  )
+}
 
 function TaskPage() {
   const { taskId } = useParams<{ taskId: string }>()
@@ -196,30 +207,34 @@ export default function App() {
         </div>
       )}
 
-      <main className="flex-grow flex flex-col relative animate-fade-in-up">
+      <main className="flex-grow flex flex-col relative animate-fade-in-up min-h-0">
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           {/* 极简企业级柔和背景光晕 */}
           <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-slate-300/10 dark:bg-slate-800/15 blur-[160px] rounded-full" />
           <div className="absolute bottom-[-15%] right-[-10%] w-[45%] h-[45%] bg-slate-400/10 dark:bg-slate-700/10 blur-[150px] rounded-full" />
         </div>
 
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/batch" element={<BatchState />} />
-          <Route path="/task/:taskId" element={<TaskPage />} />
-          <Route
-            path="/history"
-            element={
-              <HistoryView
-                onOpenTask={handleOpenTask}
-                onTaskDeleted={handleHistoryTaskDeleted}
+        <AppErrorBoundary>
+          <Suspense fallback={<PageFallback />}>
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/batch" element={<BatchState />} />
+              <Route path="/task/:taskId" element={<TaskPage />} />
+              <Route
+                path="/history"
+                element={
+                  <HistoryView
+                    onOpenTask={handleOpenTask}
+                    onTaskDeleted={handleHistoryTaskDeleted}
+                  />
+                }
               />
-            }
-          />
-          <Route path="/voices" element={<VoiceLibrary />} />
-          <Route path="/performance" element={<PerformancePage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+              <Route path="/voices" element={<VoiceLibrary />} />
+              <Route path="/performance" element={<PerformancePage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
+        </AppErrorBoundary>
       </main>
 
       <footer className="w-full border-t border-border/40 py-3 px-6 text-xs text-muted-foreground glass-panel">

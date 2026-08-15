@@ -1,5 +1,3 @@
-import json
-import pytest
 from server.services.translate import build_ai_request_args
 
 
@@ -88,6 +86,7 @@ def test_build_ai_request_args_anthropic() -> None:
 
 def test_adaptive_rate_limiter() -> None:
     import asyncio
+
     from server.services.translate import AdaptiveRateLimiter
 
     limiter = AdaptiveRateLimiter()

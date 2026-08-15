@@ -1,0 +1,29 @@
+services:
+  shiyibao:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shiyibao:local
+    container_name: shiyibao
+    init: true
+    ports:
+      # 只绑本机回环，与应用「本地闭环」安全模型一致。
+      # 宿主机 8000 被占用时：SHIYIBAO_PORT=8001 docker compose up -d
+      - "127.0.0.1:${SHIYIBAO_PORT:-8000}:8000"
+    environment:
+      SHIYIBAO_DATA_DIR: /data
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MIMO_API_KEY: ${MIMO_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      MAX_CONCURRENT_TASKS: ${MAX_CONCURRENT_TASKS:-2}
+      TRANSLATE_CONCURRENCY: ${TRANSLATE_CONCURRENCY:-2}
+      TRANSLATE_BATCH_SIZE: ${TRANSLATE_BATCH_SIZE:-20}
+      TTS_CONCURRENCY: ${TTS_CONCURRENCY:-3}
+      SUBTITLE_FONT: ${SUBTITLE_FONT:-Noto Sans CJK SC}
+    volumes:
+      - shiyibao-data:/data
+    restart: unless-stopped
+
+volumes:
+  shiyibao-data:

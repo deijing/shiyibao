@@ -1,6 +1,6 @@
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Optional, List, Dict
 
 from ..config import get_user_settings, save_user_settings
 
@@ -8,17 +8,17 @@ router = APIRouter(tags=["settings"])
 
 
 class SettingsPayload(BaseModel):
-    geminiApiKey: Optional[str] = None
-    geminiModel: Optional[str] = None
-    geminiApiUrl: Optional[str] = None
-    geminiApiFormat: Optional[str] = None
-    xiaomiTtsKey: Optional[str] = None
-    mimoVoice: Optional[str] = None
-    sourceLang: Optional[str] = None
-    targetLang: Optional[str] = None
-    streamMode: Optional[str] = None
-    originalAudioVolume: Optional[float] = None
-    customGeminiModels: Optional[List[Dict[str, str]]] = None
+    geminiApiKey: str | None = None
+    geminiModel: str | None = None
+    geminiApiUrl: str | None = None
+    geminiApiFormat: str | None = None
+    xiaomiTtsKey: str | None = None
+    mimoVoice: str | None = None
+    sourceLang: str | None = None
+    targetLang: str | None = None
+    streamMode: str | None = None
+    originalAudioVolume: float | None = None
+    customGeminiModels: list[dict[str, str]] | None = None
 
 
 @router.get("/settings")

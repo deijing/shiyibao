@@ -194,12 +194,68 @@ function normalizeTaskStatus(status: TaskStatus): TaskStatus {
   }
 }
 
-export async function uploadVideo(file: File): Promise<UploadResponse> {
+export interface UploadProgress {
+  loaded: number
+  total: number
+  percent: number
+}
+
+export async function uploadVideo(
+  file: File,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<UploadResponse> {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await apiFetch('/api/upload', { method: 'POST', body: formData })
-  if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`)
-  return res.json()
+
+  const token = typeof window !== 'undefined' ? window.__SHIYIBAO_LOCAL_TOKEN__ : undefined
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', apiUrl('/api/upload'))
+
+    if (token) {
+      xhr.setRequestHeader('X-Shiyibao-Local-Token', token)
+    }
+
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          const percent = Math.min(100, Math.round((event.loaded / event.total) * 100))
+          onProgress({ loaded: event.loaded, total: event.total, percent })
+        }
+      }
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText)
+          resolve(data)
+        } catch {
+          reject(new Error('服务端返回了无效的 JSON 响应'))
+        }
+      } else {
+        let detail = xhr.statusText || `HTTP ${xhr.status}`
+        try {
+          const err = JSON.parse(xhr.responseText)
+          if (err.detail) detail = err.detail
+        } catch {
+          // ignore
+        }
+        reject(new Error(`上传失败: ${detail}`))
+      }
+    }
+
+    xhr.onerror = () => {
+      reject(new Error('网络传输中断，视频上传失败'))
+    }
+
+    xhr.ontimeout = () => {
+      reject(new Error('视频上传超时，请检查网络连接'))
+    }
+
+    xhr.send(formData)
+  })
 }
 
 export async function createTaskFromUrl(url: string): Promise<UploadResponse> {
@@ -342,12 +398,6 @@ export async function testGeminiKey(
     }
     return { success: true, message: data.message || 'API Key 校验成功！' }
   } catch (err) {
-    if (err instanceof Error && err.message.includes('不能为空')) {
-      throw err
-    }
-    if (apiKey.trim().length >= 8) {
-      return { success: true, message: 'API Key 结构校验成功！服务通道正常。' }
-    }
     throw err instanceof Error ? err : new Error('API Key 校验失败，请检查密钥与网络通道是否有效')
   }
 }
@@ -368,12 +418,6 @@ export async function testXiaomiKey(apiKey: string): Promise<{ success: boolean;
     }
     return { success: true, message: data.message || '小米 TTS Key 校验成功！' }
   } catch (err) {
-    if (err instanceof Error && err.message.includes('不能为空')) {
-      throw err
-    }
-    if (apiKey.trim().length >= 4) {
-      return { success: true, message: '小米 TTS Key 结构校验成功！语音引擎正常。' }
-    }
     throw err instanceof Error ? err : new Error('小米 TTS Key 校验失败，请检查密钥是否有效')
   }
 }

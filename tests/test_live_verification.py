@@ -1,9 +1,8 @@
-import json
-import pytest
 from fastapi.testclient import TestClient
+
 from server.main import app
-from server.services.translate import build_ai_request_args, translate_subtitles, pick_api_key
 from server.services.mixer import _mix_filter_complex
+from server.services.translate import build_ai_request_args, pick_api_key
 
 
 def test_pick_api_key_multi_key_round_robin():

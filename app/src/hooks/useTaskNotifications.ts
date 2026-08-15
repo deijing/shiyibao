@@ -75,6 +75,9 @@ export function useTaskNotifications() {
           const additions = newCompletions
             .map(completedNotification)
             .filter((item) => !existingIds.has(item.id))
+          if (additions.length === 0 && retained.length === current.length) {
+            return current
+          }
           return [...additions, ...retained].slice(0, MAX_NOTIFICATIONS)
         })
         window.localStorage.setItem(TASK_STAGES_KEY, JSON.stringify(nextStages))

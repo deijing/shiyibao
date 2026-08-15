@@ -1,8 +1,7 @@
 import os
-from pathlib import Path
 import sys
 import tempfile
-
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:

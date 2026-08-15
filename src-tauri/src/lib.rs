@@ -134,6 +134,7 @@ fn start_backend(
         .env("SHIYIBAO_PORT", port.to_string())
         .env("SHIYIBAO_SHUTDOWN_TOKEN", shutdown_token)
         .env("SHIYIBAO_LOCAL_TOKEN", local_token)
+        .env("SHIYIBAO_PARENT_PID", std::process::id().to_string())
         .env("SHIYIBAO_DATA_DIR", data_dir.as_os_str());
 
     let (mut events, child) = command

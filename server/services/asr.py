@@ -1,7 +1,7 @@
 import asyncio
-from collections.abc import Callable
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from bcut_asr import BcutASR
@@ -15,14 +15,23 @@ BROWSER_HEADERS = {
 
 _POLL_INTERVAL = 1.0
 _MAX_WAIT_SECONDS = 600
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 2.0
 
 
-def _transcribe_sync(audio_path: Path, log_cb: Callable[..., None] | None = None) -> list[dict]:
+def _format_bcut_error(remark: str | None) -> str:
+    detail = (remark or "").strip()
+    if not detail:
+        detail = "必剪云端未返回失败原因"
+    return f"BcutASR 识别失败: {detail}"
+
+
+def _transcribe_once(audio_path: Path, log_cb: Callable[..., None] | None = None) -> list[dict]:
     asr = BcutASR(str(audio_path))
     asr.session.headers.update(BROWSER_HEADERS)
 
     if log_cb:
-        log_cb("语音识别", "正在上传 AAC 音频切片至 BcutASR 必剪云端服务...", "info")
+        log_cb("语音识别", "正在上传音频至 BcutASR 必剪云端服务...", "info")
     asr.upload()
 
     if log_cb:
@@ -30,18 +39,21 @@ def _transcribe_sync(audio_path: Path, log_cb: Callable[..., None] | None = None
     asr.create_task()
 
     waited = 0.0
+    result = None
     while True:
         result = asr.result()
         if result.state == ResultStateEnum.COMPLETE:
             break
         if result.state == ResultStateEnum.ERROR:
-            raise RuntimeError(f"BcutASR 识别失败: {result.remark}")
+            raise RuntimeError(_format_bcut_error(result.remark))
         if waited >= _MAX_WAIT_SECONDS:
             raise RuntimeError("BcutASR 识别超时")
         time.sleep(_POLL_INTERVAL)
         waited += _POLL_INTERVAL
 
     data = result.parse()
+    if not data.utterances:
+        raise RuntimeError("BcutASR 未解析出有效对白")
     segments: list[dict] = []
     total_utts = len(data.utterances)
     if log_cb:
@@ -61,6 +73,27 @@ def _transcribe_sync(audio_path: Path, log_cb: Callable[..., None] | None = None
             log_cb("语音识别", f"句 [{i+1}/{total_utts}] [{start_sec:.1f}s ~ {end_sec:.1f}s]: \"{text}\"", "info")
 
     return segments
+
+
+def _transcribe_sync(audio_path: Path, log_cb: Callable[..., None] | None = None) -> list[dict]:
+    """必剪云端偶发返回 ERROR /「出问题了」，自动换新任务重试。"""
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            return _transcribe_once(audio_path, log_cb)
+        except RuntimeError as exc:
+            last_error = exc
+            if attempt >= _MAX_ATTEMPTS:
+                break
+            if log_cb:
+                log_cb(
+                    "语音识别",
+                    f"第 {attempt}/{_MAX_ATTEMPTS} 次识别失败：{exc}。正在自动重试…",
+                    "info",
+                )
+            time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+    assert last_error is not None
+    raise last_error
 
 
 async def transcribe(

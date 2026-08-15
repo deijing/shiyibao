@@ -1,11 +1,11 @@
-import json
 import hmac
+import json
 import logging
 import os
 import platform
+import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +20,7 @@ from .security import (
     request_source_is_trusted,
 )
 from .services.audio import find_media_binary
+from .web_ui import mount_web_ui
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ async def guard_api_origin(request: Request, call_next):
             local_token=request.headers.get(LOCAL_TOKEN_HEADER),
             origin=request.headers.get("origin"),
             referer=request.headers.get("referer"),
+            sec_fetch_site=request.headers.get("sec-fetch-site"),
         )
         if not trusted:
             return JSONResponse(
@@ -133,7 +135,7 @@ async def health() -> dict:
     }
 
 
-def _shutdown_token_matches(provided_token: Optional[str]) -> bool:
+def _shutdown_token_matches(provided_token: str | None) -> bool:
     expected_token = os.getenv("SHIYIBAO_SHUTDOWN_TOKEN", "")
     return bool(
         expected_token
@@ -152,7 +154,7 @@ def _exit_process() -> None:
 @app.post("/api/shutdown", include_in_schema=False)
 async def shutdown(
     background_tasks: BackgroundTasks,
-    shutdown_token: Optional[str] = Header(
+    shutdown_token: str | None = Header(
         default=None,
         alias="X-Shiyibao-Shutdown-Token",
     ),
@@ -163,6 +165,10 @@ async def shutdown(
     return {"status": "shutting_down"}
 
 
+# 必须放在全部 /api 路由之后：存在前端构建产物时，同一端口托管 Web 控制台。
+mount_web_ui(app)
+
+
 def _server_port() -> int:
     try:
         port = int(os.getenv("SHIYIBAO_PORT", "8000"))
@@ -171,9 +177,52 @@ def _server_port() -> int:
     return port if 1 <= port <= 65535 else 8000
 
 
+def _parent_process_alive(pid: int) -> bool:
+    """探测父进程是否仍在；用于 Tauri 强杀后回收边车。"""
+    if pid <= 1:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        process_query_limited_information = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _start_parent_watch() -> None:
+    """仅在 Tauri 注入 SHIYIBAO_PARENT_PID 时启用，避免影响 ``python start.py``。"""
+    raw = os.getenv("SHIYIBAO_PARENT_PID", "").strip()
+    if not raw:
+        return
+    try:
+        parent_pid = int(raw)
+    except ValueError:
+        return
+    if parent_pid <= 1:
+        return
+
+    def _loop() -> None:
+        while True:
+            time.sleep(2.0)
+            if not _parent_process_alive(parent_pid):
+                logger.warning("父进程 %s 已退出，边车自动退出", parent_pid)
+                os._exit(0)
+
+    threading.Thread(target=_loop, name="shiyibao-parent-watch", daemon=True).start()
+
+
 def run_server() -> None:
     import uvicorn
 
+    _start_parent_watch()
     uvicorn.run(app, host="127.0.0.1", port=_server_port(), log_level="info")
 
 
