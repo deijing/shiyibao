@@ -298,9 +298,9 @@ def build_ai_request_args(
         root_url = clean_base if clean_base else default_base
         if ":generateContent" in root_url:
             url = root_url
-        elif "/v1beta/models/" in root_url:
+        elif "/models/" in root_url:
             url = f"{root_url}:generateContent"
-        elif root_url.endswith("/v1beta"):
+        elif root_url.endswith(("/v1beta", "/v1")):
             url = f"{root_url}/models/{clean_model}:generateContent"
         else:
             url = f"{root_url}/v1beta/models/{clean_model}:generateContent"
@@ -321,6 +321,17 @@ def build_ai_request_args(
             return data["candidates"][0]["content"]["parts"][0]["text"]
 
         return url, headers, payload, extract_text
+
+
+async def probe_ai_service(api_format: str, base_url: str, model: str, api_key: str) -> httpx.Response:
+    """用与翻译相同的地址、模型和鉴权验证生成接口（可能产生少量 token 费用）。"""
+    url, headers, payload, _ = build_ai_request_args(
+        api_format, base_url, model, api_key, "Return JSON only.", 'Return {"ok":true}.',
+    )
+    if api_format == "Anthropic":
+        payload["max_tokens"] = 32
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        return await client.post(url, headers=headers, json=payload)
 
 
 async def translate_subtitles(

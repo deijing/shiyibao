@@ -104,7 +104,14 @@ def test_batch_pipeline_completes_and_archives_output(monkeypatch, tmp_path: Pat
         stream_mode="batch",
         output_dir=str(output_dir),
     )
-    asyncio.run(task._execute_pipeline(task_id, request))
+    async def execute_and_flush_logs():
+        await task._execute_pipeline(task_id, request)
+        # 日志异步写入；关闭 asyncio.run 的事件循环前等待完成，避免归档日志断言竞态。
+        pending_logs = list(task._background_tasks)
+        if pending_logs:
+            await asyncio.gather(*pending_logs)
+
+    asyncio.run(execute_and_flush_logs())
 
     meta = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
     assert meta["stage"] == "complete"

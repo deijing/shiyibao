@@ -16,9 +16,11 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { getSubtitles, getAudioUrl, getExportUrl, getVideoUrl, getTaskStatus, analyzeSubtitlesAI, type SubtitleSegment, type TaskStatus } from '@/lib/api'
+import { exportSubtitles, type SubtitleExportContent, type SubtitleExportFormat, getSubtitles, getAudioUrl, getExportUrl, getVideoUrl, getTaskStatus, analyzeSubtitlesAI, type SubtitleSegment, type TaskStatus } from '@/lib/api'
 import { loadSettings } from './SettingsPanel'
 
 interface ResultStateProps {
@@ -31,60 +33,6 @@ function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60)
   const secs = Math.floor(seconds % 60)
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-}
-
-function formatTimestampSRT(seconds: number): string {
-  if (isNaN(seconds) || seconds < 0) return '00:00:00,000'
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = Math.floor(seconds % 60)
-  const ms = Math.floor((seconds % 1) * 1000)
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`
-}
-
-function formatTimestampVTT(seconds: number): string {
-  if (isNaN(seconds) || seconds < 0) return '00:00:00.000'
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = Math.floor(seconds % 60)
-  const ms = Math.floor((seconds % 1) * 1000)
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
-}
-
-function exportSubtitlesSRT(subtitles: SubtitleSegment[]): string {
-  return subtitles
-    .map((s, idx) => {
-      const start = formatTimestampSRT(s.start)
-      const end = formatTimestampSRT(s.end)
-      const text = s.translated_text || s.source_text
-      const orig = s.source_text && s.translated_text && s.source_text !== s.translated_text ? `\n${s.source_text}` : ''
-      return `${idx + 1}\n${start} --> ${end}\n${text}${orig}\n`
-    })
-    .join('\n')
-}
-
-function exportSubtitlesVTT(subtitles: SubtitleSegment[]): string {
-  const header = 'WEBVTT - 译视宝自动导出字幕\n\n'
-  const body = subtitles
-    .map((s, idx) => {
-      const start = formatTimestampVTT(s.start)
-      const end = formatTimestampVTT(s.end)
-      const text = s.translated_text || s.source_text
-      return `${idx + 1}\n${start} --> ${end}\n${text}\n`
-    })
-    .join('\n')
-  return header + body
-}
-
-function exportSubtitlesTXT(subtitles: SubtitleSegment[]): string {
-  return subtitles
-    .map((s) => {
-      const ts = formatTime(s.start)
-      const text = s.translated_text || s.source_text
-      const orig = s.source_text && s.translated_text && s.source_text !== s.translated_text ? ` (原文: ${s.source_text})` : ''
-      return `[${ts}] ${text}${orig}`
-    })
-    .join('\n')
 }
 
 function downloadTextFile(filename: string, content: string, mime: string = 'text/plain;charset=utf-8') {
@@ -293,6 +241,8 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
   const [subtitleDisplayMode, setSubtitleDisplayMode] = useState<'dual' | 'target' | 'source'>('dual')
   const [autoScrollSubtitles, setAutoScrollSubtitles] = useState(true)
   const [copiedSubtitles, setCopiedSubtitles] = useState(false)
+  const [exportContent, setExportContent] = useState<SubtitleExportContent>('translated')
+  const [subtitleExportError, setSubtitleExportError] = useState('')
   const [copiedAi, setCopiedAi] = useState(false)
 
   // AI 分析状态
@@ -321,7 +271,6 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
   const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const subDragStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null)
   const subListRef = useRef<HTMLDivElement>(null)
-  const subItemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const lastScrolledIndex = useRef<number | null>(null)
 
   // Memoize 过滤后的字幕列表，避免重绘重复计算
@@ -496,34 +445,30 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
     ])
   }
 
-  // 导出字幕文件
-  const handleExportSubtitles = (format: 'srt' | 'vtt' | 'txt' | 'json') => {
-    if (!subtitles || subtitles.length === 0) return
-    const baseName = taskStatus?.filename
-      ? taskStatus.filename.substring(0, taskStatus.filename.lastIndexOf('.')) || taskStatus.filename
-      : 'subtitles'
+  const exportContentLabel = { translated: '译文', source: '原文', bilingual: '双语' }[exportContent]
 
-    if (format === 'srt') {
-      const content = exportSubtitlesSRT(subtitles)
-      downloadTextFile(`${baseName}_字幕.srt`, content, 'text/plain;charset=utf-8')
-    } else if (format === 'vtt') {
-      const content = exportSubtitlesVTT(subtitles)
-      downloadTextFile(`${baseName}_字幕.vtt`, content, 'text/vtt;charset=utf-8')
-    } else if (format === 'txt') {
-      const content = exportSubtitlesTXT(subtitles)
-      downloadTextFile(`${baseName}_字幕.txt`, content, 'text/plain;charset=utf-8')
-    } else if (format === 'json') {
-      const content = JSON.stringify(subtitles, null, 2)
-      downloadTextFile(`${baseName}_字幕.json`, content, 'application/json;charset=utf-8')
+  const handleExportSubtitles = async (format: SubtitleExportFormat) => {
+    setSubtitleExportError('')
+    try {
+      const content = await exportSubtitles(taskId, format, exportContent)
+      const baseName = taskStatus?.filename?.replace(/\.[^.]+$/, '') || 'subtitles'
+      const mime = format === 'json' ? 'application/json' : format === 'vtt' ? 'text/vtt' : 'text/plain'
+      downloadTextFile(`${baseName}_${exportContentLabel}字幕.${format}`, content, `${mime};charset=utf-8`)
+    } catch (error) {
+      setSubtitleExportError(error instanceof Error ? error.message : '字幕导出失败')
     }
   }
 
-  const handleCopyAllSubtitles = () => {
-    if (!subtitles || subtitles.length === 0) return
-    const text = exportSubtitlesTXT(subtitles)
-    navigator.clipboard.writeText(text)
-    setCopiedSubtitles(true)
-    setTimeout(() => setCopiedSubtitles(false), 2000)
+  const handleCopyAllSubtitles = async () => {
+    setSubtitleExportError('')
+    try {
+      const text = await exportSubtitles(taskId, 'txt', exportContent)
+      await navigator.clipboard.writeText(text)
+      setCopiedSubtitles(true)
+      setTimeout(() => setCopiedSubtitles(false), 2000)
+    } catch (error) {
+      setSubtitleExportError(error instanceof Error ? error.message : '字幕复制失败')
+    }
   }
 
   const handleSubPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1421,10 +1366,19 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
               <DropdownMenu>
                 <DropdownMenuTrigger className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs px-3 py-1.5 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors outline-none shadow-2xs">
                   <FileDown className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-                  导出字幕
+                  导出字幕 · {exportContentLabel}
                   <ChevronDown className="w-3 h-3 text-slate-400" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 w-52 rounded-xl p-1.5 shadow-xl z-50">
+                  <DropdownMenuRadioGroup value={exportContent} onValueChange={(value) => {
+                    setExportContent(value as SubtitleExportContent)
+                    setCopiedSubtitles(false)
+                  }}>
+                    <DropdownMenuRadioItem value="translated">仅目标语言（译文）</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="source">仅原文</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="bilingual">双语（译文 + 原文）</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => handleExportSubtitles('srt')} className="hover:bg-slate-100 dark:hover:bg-slate-800 text-xs cursor-pointer px-3 py-2 flex items-center gap-2">
                     <FileText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> 导出 SRT 格式 (.srt)
                   </DropdownMenuItem>
@@ -1440,11 +1394,13 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                   <DropdownMenuSeparator className="bg-slate-100 dark:bg-slate-800" />
                   <DropdownMenuItem onClick={handleCopyAllSubtitles} className="hover:bg-slate-100 dark:hover:bg-slate-800 text-xs cursor-pointer px-3 py-2 flex items-center gap-2 text-purple-700 dark:text-purple-300 font-medium">
                     {copiedSubtitles ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                    {copiedSubtitles ? '已复制全量字幕' : '一键复制全量字幕'}
+                    {copiedSubtitles ? '已复制字幕' : `复制${exportContentLabel}字幕`}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+
+            {subtitleExportError && <p role="alert" className="px-4 py-2 text-xs text-red-600">{subtitleExportError}</p>}
 
             {/* TAB 1: 白底字幕列表 */}
             {rightPanelTab === 'subtitles' && (

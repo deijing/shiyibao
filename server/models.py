@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +26,7 @@ class TaskStartRequest(BaseModel):
     source_lang: str = "auto"
     target_lang: str = "zh"
     stream_mode: str = "streaming"
+    duration_mode: Literal["speed_audio", "slow_video"] = "speed_audio"
     original_audio_volume: float = Field(default=0.2, ge=0.0, le=1.0)
     input_file_path: str | None = None
     output_dir: str | None = None
@@ -41,6 +43,7 @@ class TaskStatusResponse(BaseModel):
     target_lang: str | None = None
     voice: str | None = None
     stream_mode: str | None = "streaming"
+    duration_mode: Literal["speed_audio", "slow_video"] = "speed_audio"
     original_audio_volume: float = 0.2
     preview_ready: bool = False
     preview_url: str | None = None

@@ -114,9 +114,14 @@ async def _ffmpeg_list_section(flag: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        stdout, _ = await proc.communicate()
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        except (TimeoutError, asyncio.CancelledError):
+            proc.kill()
+            await proc.communicate()
+            raise
         return stdout.decode("utf-8", errors="replace")
-    except (OSError, asyncio.CancelledError):
+    except (OSError, TimeoutError):
         return ""
 
 

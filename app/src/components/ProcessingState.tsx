@@ -159,6 +159,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
         source_lang: status?.source_lang || settings.sourceLang,
         target_lang: status?.target_lang || settings.targetLang,
         stream_mode: (status?.stream_mode as 'streaming' | 'batch') || 'streaming',
+        duration_mode: status?.duration_mode ?? settings.durationMode ?? 'speed_audio',
         original_audio_volume: status?.original_audio_volume ?? settings.originalAudioVolume ?? 0.2,
       }
       await startTask(taskId, config)
@@ -185,7 +186,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
         s.stage === 'translating'
       const [latestLogs, realSubs] = await Promise.all([
         getTaskLogs(taskId),
-        earlyStage || !subtitlesFrozenRef.current
+        earlyStage || (s.duration_mode === 'slow_video' && s.stage === 'complete') || !subtitlesFrozenRef.current
           ? getSubtitles(taskId).catch(() => [] as SubtitleSegment[])
           : Promise.resolve(null as SubtitleSegment[] | null),
       ])

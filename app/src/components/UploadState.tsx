@@ -176,6 +176,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
       source_lang: current.sourceLang || 'auto',
       target_lang: current.targetLang || 'zh',
       stream_mode: current.streamMode || 'streaming',
+      duration_mode: current.durationMode || 'speed_audio',
       original_audio_volume: origVol,
     })
 

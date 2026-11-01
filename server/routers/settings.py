@@ -1,4 +1,6 @@
 
+from typing import Literal
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -17,6 +19,7 @@ class SettingsPayload(BaseModel):
     sourceLang: str | None = None
     targetLang: str | None = None
     streamMode: str | None = None
+    durationMode: Literal["speed_audio", "slow_video"] | None = None
     originalAudioVolume: float | None = None
     customGeminiModels: list[dict[str, str]] | None = None
 

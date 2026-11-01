@@ -627,6 +627,7 @@ export default function BatchState() {
             source_lang: currentSettings.sourceLang || 'auto',
             target_lang: item.targetLang,
             stream_mode: currentSettings.streamMode || 'streaming',
+            duration_mode: currentSettings.durationMode || 'speed_audio',
             original_audio_volume: currentSettings.originalAudioVolume ?? 0.2,
             output_dir: archiveOutputDir,
           })
@@ -643,6 +644,7 @@ export default function BatchState() {
             source_lang: currentSettings.sourceLang || 'auto',
             target_lang: item.targetLang,
             stream_mode: currentSettings.streamMode || 'streaming',
+            duration_mode: currentSettings.durationMode || 'speed_audio',
             original_audio_volume: currentSettings.originalAudioVolume ?? 0.2,
             output_dir: archiveOutputDir,
           })

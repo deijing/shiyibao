@@ -38,6 +38,7 @@ export interface AppSettings {
   sourceLang: string
   targetLang: string
   streamMode?: 'streaming' | 'batch'
+  durationMode?: 'speed_audio' | 'slow_video'
   originalAudioVolume?: number
   customGeminiModels?: { id: string; name: string }[]
 }
@@ -222,8 +223,8 @@ export function getApiPreviewUrl(format?: string, baseUrl?: string, model?: stri
 
   const root = cleanBase || 'https://generativelanguage.googleapis.com'
   if (root.includes(':generateContent')) return root
-  if (root.includes('/v1beta/models/')) return `${root}:generateContent`
-  if (root.endsWith('/v1beta')) return `${root}/models/${cleanModel}:generateContent`
+  if (root.includes('/models/')) return `${root}:generateContent`
+  if (root.endsWith('/v1beta') || root.endsWith('/v1')) return `${root}/models/${cleanModel}:generateContent`
   return `${root}/v1beta/models/${cleanModel}:generateContent`
 }
 
@@ -259,6 +260,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sourceLang: 'auto',
   targetLang: 'zh',
   streamMode: 'streaming',
+  durationMode: 'speed_audio',
   originalAudioVolume: 0.2,
   customGeminiModels: [],
 }
@@ -374,7 +376,7 @@ export default function SettingsPanel() {
     setTestingGemini(true)
     setGeminiResult(null)
     try {
-      const res = await testGeminiKey(settings.geminiApiKey, settings.geminiApiUrl, settings.geminiApiFormat)
+      const res = await testGeminiKey(settings.geminiApiKey, settings.geminiApiUrl, settings.geminiApiFormat, settings.geminiModel)
       setGeminiVerified(true)
       setGeminiResult({
         type: 'success',
@@ -931,6 +933,18 @@ export default function SettingsPanel() {
                   </Select>
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <Label htmlFor="duration-mode">配音时长适配</Label>
+              <Select value={settings.durationMode || 'speed_audio'} onValueChange={(value) => setSettings(s => ({ ...s, durationMode: value === 'slow_video' ? 'slow_video' : 'speed_audio' }))}>
+                <SelectTrigger id="duration-mode" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="speed_audio">加速配音，保持原片时长（默认）</SelectItem>
+                  <SelectItem value="slow_video">视频适配配音时长，放慢画面</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">放慢画面会保留配音原速，仅延长配音较长的语句画面，并同步调整字幕和原声；使用整片合成，完成后播放。</p>
             </div>
 
             {/* 行三：合成原声音量调节与静音 */}

@@ -5,12 +5,12 @@ import subprocess
 import sys
 from typing import Any
 
-import httpx
 from fastapi import APIRouter
 
 from ..config import APP_DATA_DIR, WORKSPACE_DIR, get_user_settings
 from ..services.audio import find_media_binary
 from ..services.hwaccel import describe_acceleration
+from ..services.translate import probe_ai_service
 
 router = APIRouter(tags=["environment"])
 
@@ -25,57 +25,48 @@ async def check_environment() -> dict[str, Any]:
     system_name = platform.system()
 
     if system_name == "Darwin":
-        ff_install_hint = "可通过终端运行 “brew install ffmpeg” 安装。"
+        ff_install_hint = "请安装带 libass 的 arm64/Intel 对应架构 FFmpeg（如 Homebrew ffmpeg-full）；已安装时可用 SHIYIBAO_FFMPEG_DIR 指向其 bin 目录。"
     elif system_name == "Windows":
         ff_install_hint = "可通过命令行运行 “winget install Gyan.FFmpeg” 安装。"
     else:
         ff_install_hint = "请通过系统包管理器安装 ffmpeg 与 ffprobe。"
 
     if ffmpeg_path and ffprobe_path:
-        version_str = "已找到可执行文件"
         try:
-            # 探测进程要放到线程里：同步 subprocess 会把事件循环连带任务状态轮询一起卡住。
-            res = await asyncio.to_thread(
-                subprocess.run, [ffmpeg_path, "-version"], capture_output=True, text=True, timeout=3
+            version_str = ""
+            for executable in (ffmpeg_path, ffprobe_path):
+                result = await asyncio.to_thread(
+                    subprocess.run, [executable, "-version"], capture_output=True,
+                    text=True, errors="replace", timeout=15,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"{executable}: {result.stderr.strip()[-500:]}")
+                if executable == ffmpeg_path:
+                    version_str = result.stdout.splitlines()[0].split(" Copyright")[0]
+            result = await asyncio.to_thread(
+                subprocess.run, [ffmpeg_path, "-hide_banner", "-filters"],
+                capture_output=True, text=True, errors="replace", timeout=15,
             )
-            if res.returncode == 0:
-                first_line = res.stdout.splitlines()[0]
-                version_str = first_line.split(" Copyright")[0]
-        except Exception:
-            pass
-
-        # 检查是否支持 ASS 字幕滤镜 (libass)
-        has_ass = False
-        try:
-            res_filters = await asyncio.to_thread(
-                subprocess.run, [ffmpeg_path, "-filters"], capture_output=True, text=True, timeout=5
-            )
-            if res_filters.returncode == 0:
-                has_ass = " ass " in res_filters.stdout or "\n.. ass " in res_filters.stdout or "\n... ass " in res_filters.stdout
-        except Exception:
-            pass
-
-        if has_ass:
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr.strip()[-500:])
+            filters = {parts[1] for line in result.stdout.splitlines() if len(parts := line.split()) >= 2}
+            if not {"ass", "subtitles"} & filters:
+                checks.append({
+                    "id": "ffmpeg", "category": "core", "name": "FFmpeg / FFprobe 音视频编解码引擎",
+                    "status": "fail", "detail": f"{version_str} ({ffmpeg_path}) 缺少 ass/subtitles 字幕滤镜",
+                    "recommendation": "请安装带 libass 的 FFmpeg；macOS 可安装 ffmpeg-full，或用 SHIYIBAO_FFMPEG_DIR 指向完整构建的 bin 目录。",
+                })
+            else:
+                checks.append({
+                    "id": "ffmpeg", "category": "core", "name": "FFmpeg / FFprobe 音视频编解码引擎",
+                    "status": "pass", "detail": f"{version_str} (路径: {ffmpeg_path}; FFprobe: {ffprobe_path})",
+                    "recommendation": None,
+                })
+        except (OSError, subprocess.TimeoutExpired, RuntimeError, IndexError) as exc:
             checks.append({
-                "id": "ffmpeg",
-                "category": "core",
-                "name": "FFmpeg / FFprobe 音视频编解码引擎",
-                "status": "pass",
-                "detail": f"{version_str} (路径: {ffmpeg_path})",
-                "recommendation": None,
-            })
-        else:
-            rec_ass = {
-                "Darwin": "当前 FFmpeg 缺失 libass (ass 字幕烧录滤镜)。请在终端运行：brew tap homebrew-ffmpeg/ffmpeg && brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full",
-                "Windows": "当前 FFmpeg 缺失 libass 滤镜。请使用包含 libass 的 Gyan.FFmpeg 构建（winget install Gyan.FFmpeg）。",
-            }.get(system_name, "请安装带 --enable-libass 支持的 FFmpeg 版本。")
-            checks.append({
-                "id": "ffmpeg",
-                "category": "core",
-                "name": "FFmpeg / FFprobe 音视频编解码引擎",
-                "status": "fail",
-                "detail": f"{version_str} (路径: {ffmpeg_path}) - ❌ 缺失 libass/ass 字幕烧录滤镜",
-                "recommendation": rec_ass,
+                "id": "ffmpeg", "category": "core", "name": "FFmpeg / FFprobe 音视频编解码引擎",
+                "status": "fail", "detail": f"FFmpeg/FFprobe 执行失败或超时 ({ffmpeg_path}): {exc}",
+                "recommendation": "请检查执行权限、macOS 安全提示、动态库与 arm64 架构；可用 SHIYIBAO_FFMPEG_DIR 指向可运行的 FFmpeg/FFprobe 目录。",
             })
 
         # 1b. GPU / 硬件编码能力
@@ -154,60 +145,37 @@ async def check_environment() -> dict[str, Any]:
         # 支持逗号分隔多 key
         gemini_key = gemini_key_raw.replace("，", ",").split(",")[0].strip()
         try:
-            if api_format in ("OpenAI", "OpenAI-Response"):
-                default_base = "https://api.openai.com"
-                root_url = api_url if api_url else default_base
-                url = f"{root_url}/models" if root_url.endswith("/v1") else f"{root_url}/v1/models"
-                headers = {"Authorization": f"Bearer {gemini_key}"}
-            elif api_format == "Anthropic":
-                default_base = "https://api.anthropic.com"
-                root_url = api_url if api_url else default_base
-                url = f"{root_url}/messages" if root_url.endswith("/v1") else f"{root_url}/v1/messages"
-                headers = {"x-api-key": gemini_key, "anthropic-version": "2023-06-01"}
+            resp = await probe_ai_service(
+                api_format, api_url, user_settings.get("geminiModel") or "gemini-2.0-flash", gemini_key,
+            )
+            if resp.status_code in (200, 201):
+                checks.append({
+                    "id": "gemini_api",
+                    "category": "service",
+                    "name": service_name,
+                    "status": "pass",
+                    "detail": f"{api_format} API Key 校验成功，服务端点通信正常",
+                    "recommendation": None,
+                })
             else:
-                default_base = "https://generativelanguage.googleapis.com"
-                root_url = api_url if api_url else default_base
-                url = f"{root_url}/models" if root_url.endswith("/v1beta") else f"{root_url}/v1beta/models"
-                headers = {"x-goog-api-key": gemini_key}
-
-            async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
-                if api_format == "Anthropic":
-                    resp = await client.post(url, json={
-                        "model": "claude-3-5-haiku-20241022",
-                        "max_tokens": 5,
-                        "messages": [{"role": "user", "content": "hi"}]
-                    })
-                else:
-                    resp = await client.get(url)
-
-                if resp.status_code in (200, 201):
-                    checks.append({
-                        "id": "gemini_api",
-                        "category": "service",
-                        "name": service_name,
-                        "status": "pass",
-                        "detail": f"{api_format} API Key 校验成功，服务端点通信正常",
-                        "recommendation": None,
-                    })
-                else:
-                    detail = f"{api_format} API 响应异常 (HTTP {resp.status_code})"
-                    try:
-                        err = resp.json()
-                        if "error" in err:
-                            if isinstance(err["error"], dict) and "message" in err["error"]:
-                                detail = f"{api_format} 报错: {err['error']['message']}"
-                            elif isinstance(err["error"], str):
-                                detail = f"{api_format} 报错: {err['error']}"
-                    except Exception:
-                        pass
-                    checks.append({
-                        "id": "gemini_api",
-                        "category": "service",
-                        "name": service_name,
-                        "status": "fail",
-                        "detail": detail,
-                        "recommendation": f"请检查 {api_format} API Key 是否有效，或检查代理地址与网络连通性",
-                    })
+                detail = f"{api_format} API 响应异常 (HTTP {resp.status_code})"
+                try:
+                    err = resp.json()
+                    if "error" in err:
+                        if isinstance(err["error"], dict) and "message" in err["error"]:
+                            detail = f"{api_format} 报错: {err['error']['message']}"
+                        elif isinstance(err["error"], str):
+                            detail = f"{api_format} 报错: {err['error']}"
+                except Exception:
+                    pass
+                checks.append({
+                    "id": "gemini_api",
+                    "category": "service",
+                    "name": service_name,
+                    "status": "fail",
+                    "detail": detail,
+                    "recommendation": f"请检查 {api_format} API Key 是否有效，或检查代理地址与网络连通性",
+                })
         except Exception as e:
             checks.append({
                 "id": "gemini_api",
