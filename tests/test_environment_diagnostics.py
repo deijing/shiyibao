@@ -1,5 +1,6 @@
 import asyncio
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -43,6 +44,7 @@ def test_ffmpeg_diagnosis_distinguishes_execution_and_filters(monkeypatch, failu
         assert '缺少 ass/subtitles' in check['detail']
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='校验 POSIX 下无扩展名的 ffmpeg 查找逻辑')
 def test_macos_gui_searches_arm_homebrew_and_unlinked_full_build(monkeypatch, tmp_path):
     monkeypatch.setattr(audio.sys, 'platform', 'darwin')
     directories = audio._common_media_dirs()
@@ -58,6 +60,7 @@ def test_macos_gui_searches_arm_homebrew_and_unlinked_full_build(monkeypatch, tm
     assert audio.find_media_binary('ffmpeg') == str(binary)
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='校验 POSIX 下无扩展名的 ffmpeg 查找逻辑')
 def test_sidecar_searches_extraction_bin(monkeypatch, tmp_path):
     binary = tmp_path / 'bin' / 'ffmpeg'
     binary.parent.mkdir()
