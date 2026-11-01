@@ -274,7 +274,7 @@ async def merge_chunk(
     return out_path
 
 
-async def concat_chunks(task_dir: Path, chunk_paths: list[Path]) -> Path:
+async def concat_chunks(task_dir: Path, chunk_paths: list[Path], *, durations: list[float] | None = None) -> Path:
     """无损拼接已渲染的 chunk，生成最终可下载视频。"""
     out_path = task_dir / "final.mp4"
     list_file = task_dir / "chunks_concat.txt"
@@ -289,7 +289,14 @@ async def concat_chunks(task_dir: Path, chunk_paths: list[Path]) -> Path:
         raise RuntimeError("存在损坏的视频分片，已拒绝无损拼接: " + ", ".join(broken))
     if not valid_paths:
         raise RuntimeError("没有可拼接的有效视频分片")
-    lines = [f"file '{_escape_concat_path(p)}'" for p in valid_paths]
+    lines = []
+    if durations is not None and len(durations) != len(valid_paths):
+        raise ValueError("拼接时长必须与分片数量一致")
+    for i, path in enumerate(valid_paths):
+        lines.append(f"file '{_escape_concat_path(path)}'")
+        if durations is not None:
+            # AAC 帧会补齐尾部，显式视频时长避免每片积累音频 padding 造成时间轴漂移。
+            lines.append(f"duration {durations[i]:.9f}")
     list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     await run_ffmpeg([
         "-f", "concat", "-safe", "0", "-i", str(list_file),

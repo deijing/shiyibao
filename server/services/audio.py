@@ -9,8 +9,12 @@ def _common_media_dirs() -> list[Path]:
     """返回 GUI 应用可能未纳入 PATH 的平台特定安装位置。"""
     if sys.platform == "darwin":
         return [
+            Path("/opt/homebrew/opt/ffmpeg-full/bin"),
             Path("/opt/homebrew/bin"),
+            Path("/opt/homebrew/opt/ffmpeg/bin"),
+            Path("/usr/local/opt/ffmpeg-full/bin"),
             Path("/usr/local/bin"),
+            Path("/usr/local/opt/ffmpeg/bin"),
             Path("/opt/local/bin"),
         ]
 
@@ -50,10 +54,13 @@ def find_media_binary(name: str) -> str | None:
 
     bundle_dir = getattr(sys, "_MEIPASS", None)
     if bundle_dir:
-        candidate_dirs.append(Path(bundle_dir))
+        candidate_dirs.extend([Path(bundle_dir), Path(bundle_dir) / "bin"])
 
     if getattr(sys, "frozen", False):
         candidate_dirs.append(Path(sys.executable).resolve().parent)
+
+    if sys.platform == "darwin":
+        candidate_dirs.extend(_common_media_dirs())
 
     for directory in candidate_dirs:
         candidate = directory / executable_name
@@ -80,14 +87,13 @@ def get_subtitle_burn_filter() -> str | None:
     try:
         import subprocess
         res = subprocess.run(
-            [executable, "-filters"], capture_output=True, text=True, timeout=5
+            [executable, "-filters"], capture_output=True, text=True, errors="replace", timeout=15
         )
         if res.returncode == 0:
-            stdout = res.stdout
-            if " ass " in stdout or "\n.. ass " in stdout or "\n... ass " in stdout:
-                return "ass"
-            if " subtitles " in stdout or "\n.. subtitles " in stdout:
-                return "subtitles"
+            names = {parts[1] for line in res.stdout.splitlines() if len(parts := line.split()) >= 2}
+            for name in ("ass", "subtitles"):
+                if name in names:
+                    return name
     except Exception:
         pass
     return None

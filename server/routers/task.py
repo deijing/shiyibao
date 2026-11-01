@@ -31,7 +31,8 @@ from ..models import (
     UploadResponse,
 )
 from ..performance import task_limiter
-from ..services import asr, audio, downloader, language_detector, mixer, translate, tts
+from ..services.subtitle_export import SubtitleContent, SubtitleFormat, serialize_subtitles
+from ..services import asr, audio, downloader, language_detector, mixer, retiming, translate, tts
 
 logger = logging.getLogger(__name__)
 
@@ -349,6 +350,7 @@ def _status(meta: dict) -> TaskStatusResponse:
         target_lang=meta.get("target_lang"),
         voice=meta.get("voice"),
         stream_mode=meta.get("stream_mode", "streaming"),
+        duration_mode=meta.get("duration_mode", "speed_audio"),
         original_audio_volume=meta.get("original_audio_volume", 0.2),
         preview_ready=meta.get("preview_ready", False),
         preview_url=meta.get("preview_url"),
@@ -568,7 +570,15 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             logger.warning("生成视频标题失败: %s", e)
             _sync_project_folder_alias(task_id)
 
-        if req.stream_mode != "batch" and len(segments) > 0:
+        if req.duration_mode == "slow_video":
+            await _update_meta_async(task_id, stage=TaskStage.SYNTHESIZING.value, progress=85,
+                                     message="生成原速配音，按配音时长适配画面")
+            log_cb("画面适配", "按配音时长放慢画面，使用整片合成；较短配音保持画面原速", "info")
+            rendered = await tts.synthesize_clips(task_dir, segments, req.voice, mimo_api_key, log_cb=log_cb)
+            await _update_meta_async(task_id, stage=TaskStage.MIXING.value, progress=95,
+                                     message="按段调整画面、原声和字幕时间轴")
+            await retiming.merge_to_dub_duration(task_dir, video_path, segments, rendered, orig_vol)
+        elif req.stream_mode != "batch" and len(segments) > 0:
             # 4. 流式分片增量渲染阶段（断点续传检查）
             duration_total = await audio.probe_duration(video_path)
             if duration_total <= 0.0:
@@ -740,7 +750,7 @@ def _task_finished(task_id: str, task: asyncio.Task) -> None:
 
 @router.post("/task/{task_id}/start", response_model=TaskStatusResponse)
 async def start_task(task_id: str, req: TaskStartRequest) -> TaskStatusResponse:
-    _read_meta(task_id)  # 任务不存在时返回 404
+    previous = _read_meta(task_id)  # 任务不存在时返回 404
     if not req.gemini_api_key.strip():
         raise HTTPException(status_code=400, detail="Gemini API Key 不能为空")
     if not (req.mimo_api_key.strip() or MIMO_API_KEY):
@@ -749,9 +759,21 @@ async def start_task(task_id: str, req: TaskStartRequest) -> TaskStatusResponse:
     if active_task is not None and not active_task.done():
         raise HTTPException(status_code=409, detail="task is already running")
 
+    # 变速模式的时间轴不同，切换/重试时不可复用旧成片、分片或字幕。
+    if req.duration_mode == "slow_video" or previous.get("duration_mode") == "slow_video":
+        task_dir = _task_dir(task_id)
+        for pattern in ("final.mp4", "preview.mp4", "chunk_*.mp4", "dub_*.wav", "dubbed_audio.wav",
+                        "subtitles_retimed.json", "subtitles_zh.ass", "subtitles_zh.srt"):
+            for path in task_dir.glob(pattern):
+                path.unlink(missing_ok=True)
+        req.stream_mode = "batch" if req.duration_mode == "slow_video" else req.stream_mode
+        await _update_meta_async(task_id, preview_ready=False, preview_url=None, preview_duration=0,
+                                 chunks=[], total_chunks=1, completed_chunks=0, rendered_seconds=0)
+
     await _update_meta_async(task_id, stage=TaskStage.PENDING.value, progress=0,
                  message="已开始", error=None, source_lang=req.source_lang, target_lang=req.target_lang,
                  voice=req.voice, gemini_model=req.gemini_model, original_audio_volume=req.original_audio_volume,
+                 duration_mode=req.duration_mode, stream_mode=req.stream_mode,
                  gemini_api_url=req.gemini_api_url, gemini_api_format=req.gemini_api_format)
 
     task = asyncio.create_task(_run_pipeline(task_id, req))
@@ -804,10 +826,34 @@ async def task_subtitles(task_id: str) -> list[SubtitleSegment]:
     translated = task_dir / f"subtitles_{target_lang}.json"
     src = task_dir / "subtitles_src.json"
     path = translated if translated.exists() else src
+    retimed = task_dir / "subtitles_retimed.json"
+    if meta.get("duration_mode") == "slow_video" and retimed.exists():
+        path = retimed
     if not path.exists():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
     return [SubtitleSegment(**seg) for seg in data]
+
+
+@router.get("/task/{task_id}/subtitles/export")
+async def export_task_subtitles(
+    task_id: str, format: SubtitleFormat = "srt", content: SubtitleContent = "bilingual",
+) -> Response:
+    segments = await task_subtitles(task_id)
+    if not segments:
+        raise HTTPException(status_code=404, detail="暂无可导出的字幕")
+    selected = [segment.model_dump() for segment in segments]
+    if content != "bilingual" and not any(str(s.get(f"{content}_text") or "").strip() for s in selected):
+        raise HTTPException(status_code=409, detail="所选语言暂无字幕内容")
+    from urllib.parse import quote
+
+    labels = {"translated": "译文", "source": "原文", "bilingual": "双语"}
+    filename = f"subtitles_{labels[content]}.{format}"
+    media = {"srt": "application/x-subrip", "vtt": "text/vtt", "txt": "text/plain", "json": "application/json"}
+    return Response(
+        serialize_subtitles(selected, format, content), media_type=media[format],
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 @router.get("/task/{task_id}/audio/{track}")
@@ -1268,6 +1314,9 @@ async def analyze_task_subtitles(task_id: str, req: AIAnalyzeRequest) -> AIAnaly
     translated = task_dir / f"subtitles_{target_lang}.json"
     src = task_dir / "subtitles_src.json"
     path = translated if translated.exists() else src
+    retimed = task_dir / "subtitles_retimed.json"
+    if meta.get("duration_mode") == "slow_video" and retimed.exists():
+        path = retimed
 
     if not path.exists():
         return AIAnalyzeResponse(success=False, analysis="尚未找到字幕文件", mode=req.mode)

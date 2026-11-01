@@ -94,7 +94,7 @@ def test_fastapi_endpoints_for_all_protocols(monkeypatch):
         async def get(self, url: str):
             return FakeResponse(200, {"models": [{"id": "gpt-4o"}, {"id": "claude-3-5-sonnet-20241022"}]})
 
-        async def post(self, url: str, json: dict = None):
+        async def post(self, url: str, json: dict = None, **kwargs):
             return FakeResponse(200, {"message": "API 校验成功"})
 
     monkeypatch.setattr("server.routers.voice.httpx.AsyncClient", FakeAsyncClient)

@@ -58,6 +58,7 @@ export interface TaskStartConfig {
   source_lang?: string
   target_lang: string
   stream_mode?: 'streaming' | 'batch'
+  duration_mode?: 'speed_audio' | 'slow_video'
   original_audio_volume?: number
   input_file_path?: string
   output_dir?: string
@@ -82,6 +83,7 @@ export interface TaskStatus {
   target_lang?: string
   voice?: string
   stream_mode?: 'streaming' | 'batch'
+  duration_mode?: 'speed_audio' | 'slow_video'
   original_audio_volume?: number
   gemini_api_url?: string
   gemini_api_format?: string
@@ -290,6 +292,19 @@ export async function getSubtitles(taskId: string): Promise<SubtitleSegment[]> {
   return res.json()
 }
 
+export type SubtitleExportContent = 'translated' | 'source' | 'bilingual'
+export type SubtitleExportFormat = 'srt' | 'vtt' | 'txt' | 'json'
+
+export async function exportSubtitles(taskId: string, format: SubtitleExportFormat, content: SubtitleExportContent): Promise<string> {
+  const query = new URLSearchParams({ format, content })
+  const res = await apiFetch(`/api/task/${taskId}/subtitles/export?${query}`)
+  if (!res.ok) {
+    const error = await res.json().catch(() => null)
+    throw new Error(error?.detail || '字幕导出失败')
+  }
+  return res.text()
+}
+
 export function getAudioUrl(taskId: string, track: 'tts' | 'original'): string {
   return apiUrl(`/api/task/${taskId}/audio/${track}`)
 }
@@ -378,6 +393,7 @@ export async function testGeminiKey(
   apiKey: string,
   apiUrl?: string,
   apiFormat?: string,
+  model?: string,
 ): Promise<{ success: boolean; message: string }> {
   if (!apiKey || !apiKey.trim()) {
     throw new Error('API Key 不能为空，请先输入密钥')
@@ -387,6 +403,7 @@ export async function testGeminiKey(
     const res = await apiFetch('/api/test/gemini', {
       method: 'POST',
       body: JSON.stringify({
+        model: model || 'gemini-2.0-flash',
         api_key: apiKey.trim(),
         api_url: (apiUrl || '').trim(),
         api_format: (apiFormat || 'Gemini').trim(),

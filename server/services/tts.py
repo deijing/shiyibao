@@ -260,7 +260,12 @@ async def _mix_rendered_clips(
         filters.append(f"[{i}:a]{','.join(clip_filters)}[a{i}]")
         labels.append(f"[a{i}]")
 
-    mix = "".join(labels) + f"amix=inputs={len(rendered)}:normalize=0:dropout_transition=0[mixed]"
+    # 静音基轨从 PTS=0 开始，固定时间轴；否则 amix 可能以首条延迟配音的
+    # 时间戳起算，后续 asetpts 会把片头空白一起移除，造成配音整体提前。
+    mix_duration = max(float(track_duration or 0), max(end for _, end, _ in rendered))
+    filters.append(f"anullsrc=r={WORK_RATE}:cl=mono:d={mix_duration:.6f}[base]")
+    mix = ("[base]" + "".join(labels)
+           + f"amix=inputs={len(rendered) + 1}:duration=first:normalize=0:dropout_transition=0[mixed]")
     filter_complex = ";".join(filters + [mix, _tail_filter("[mixed]", track_duration)])
 
     args += [
@@ -471,17 +476,15 @@ async def preload_all_tts(
         return success_count
 
 
-async def synthesize_all(
+async def synthesize_clips(
     task_dir: Path,
     segments: list[dict],
     voice: str,
     api_key: str,
     log_cb: Callable[..., None] | None = None,
-    out_filename: str = "dubbed_audio.wav",
-    track_duration: float | None = None,
     utterances: list[dict] | None = None,
-) -> Path:
-    """合成自然的翻译语句，再组装配音音轨。"""
+) -> list[tuple[float, float, Path]]:
+    """生成原速配音切片，返回源视频中的发声窗口与缓存路径。"""
     seg_dir = task_dir / "tts_segments"
     seg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -518,6 +521,21 @@ async def synthesize_all(
         key=lambda item: item[0],
     )
 
+    return rendered
+
+
+async def synthesize_all(
+    task_dir: Path,
+    segments: list[dict],
+    voice: str,
+    api_key: str,
+    log_cb: Callable[..., None] | None = None,
+    out_filename: str = "dubbed_audio.wav",
+    track_duration: float | None = None,
+    utterances: list[dict] | None = None,
+) -> Path:
+    """合成自然的翻译语句，再按原视频时间窗组装配音音轨。"""
+    rendered = await synthesize_clips(task_dir, segments, voice, api_key, log_cb, utterances)
     if log_cb:
         log_cb("音色合成", f"全套 {len(rendered)} 条配音音频下载完成，开始 FFmpeg 多轨音频拼接与时间轴对齐...", "info")
 

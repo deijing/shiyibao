@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..config import MIMO_API_KEY, MIMO_API_URL, VOICE_PREVIEWS_DIR, get_user_settings
+from ..services.translate import probe_ai_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class KeyTestRequest(BaseModel):
     api_key: str
     api_url: str = ""
     api_format: str = "Gemini"
+    model: str = "gemini-2.0-flash"
 
 
 @router.post("/test/gemini")
@@ -78,52 +80,13 @@ async def test_gemini_key(req: KeyTestRequest):
         raise HTTPException(status_code=400, detail="API Key 不能为空")
 
     fmt = (req.api_format or "Gemini").strip()
-    clean_base = (req.api_url or "").strip().rstrip("/")
-
-    if fmt in ("OpenAI", "OpenAI-Response"):
-        default_base = "https://api.openai.com"
-        root_url = clean_base if clean_base else default_base
-        url = f"{root_url}/models" if root_url.endswith("/v1") else f"{root_url}/v1/models"
-        headers = {"Authorization": f"Bearer {key}"}
-    elif fmt == "Anthropic":
-        default_base = "https://api.anthropic.com"
-        root_url = clean_base if clean_base else default_base
-        url = f"{root_url}/messages" if root_url.endswith("/v1") else f"{root_url}/v1/messages"
-        headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
-    else:
-        default_base = "https://generativelanguage.googleapis.com"
-        root_url = clean_base if clean_base else default_base
-        url = f"{root_url}/models" if root_url.endswith("/v1beta") else f"{root_url}/v1beta/models"
-        headers = {"x-goog-api-key": key}
-
-    async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
-        try:
-            if fmt == "Anthropic":
-                # Anthropic GET /v1/messages 不支持，试发简短消息
-                resp = await client.post(url, json={
-                    "model": "claude-3-5-haiku-20241022",
-                    "max_tokens": 5,
-                    "messages": [{"role": "user", "content": "hi"}]
-                })
-            else:
-                resp = await client.get(url)
-
-            if resp.status_code in (200, 201):
-                return {"status": "ok", "message": f"{fmt} API 校验成功！通信与密钥正常。"}
-            else:
-                detail = f"密钥或网络异常 (状态码 {resp.status_code})"
-                try:
-                    err = resp.json()
-                    if "error" in err:
-                        if isinstance(err["error"], dict) and "message" in err["error"]:
-                            detail = err["error"]["message"]
-                        elif isinstance(err["error"], str):
-                            detail = err["error"]
-                except Exception:
-                    pass
-                raise HTTPException(status_code=400, detail=f"{fmt} API 校验失败: {detail}")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=502, detail=f"API 通信失败: {str(e)}") from e
+    try:
+        resp = await probe_ai_service(fmt, req.api_url, req.model, key)
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="API 通信失败，请检查地址与网络") from exc
+    if 200 <= resp.status_code < 300:
+        return {"status": "ok", "message": f"{fmt} 生成接口校验成功。"}
+    raise HTTPException(status_code=400, detail=f"{fmt} 生成接口校验失败 (HTTP {resp.status_code})，请检查模型、协议与密钥")
 
 
 @router.post("/models/gemini")
@@ -262,7 +225,7 @@ async def test_xiaomi_key(req: KeyTestRequest):
                 headers={"api-key": key, "Content-Type": "application/json"},
                 json=body,
             )
-            if resp.is_success:
+            if 200 <= resp.status_code < 300:
                 return {"status": "ok", "message": "小米 TTS Key 校验通过！语音合成服务可调用。"}
             else:
                 raise HTTPException(status_code=400, detail=f"小米 TTS Key 校验失败 (HTTP {resp.status_code})")
