@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 import uuid
@@ -13,6 +14,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from filelock import FileLock
+from pydantic import BaseModel, Field
 
 from .. import security
 from ..config import MIMO_API_KEY, PROJECTS_DIR, TASKS_DIR, UPLOADS_DIR
@@ -325,7 +327,41 @@ def _title_from_subtitles(task_dir: Path, target_lang: str) -> str | None:
     return None
 
 
+def _remove_project_aliases(task_dir: Path) -> None:
+    """删除 PROJECTS_DIR 下指向该任务目录的快捷符号链接，避免删除任务后留下失效链接。"""
+    if not PROJECTS_DIR.exists():
+        return
+    target = task_dir.resolve()
+    for link in PROJECTS_DIR.iterdir():
+        if not link.is_symlink():
+            continue
+        with suppress(OSError):
+            if Path(os.readlink(link)).resolve() == target:
+                link.unlink()
+
+
+def _repair_stored_title(meta: dict) -> None:
+    """修复历史数据：旧版本可能存下了「{ title xxx }」这类模型原样输出，读取时规整一次并落盘（原地更新 meta）。"""
+    video_title = meta.get("video_title")
+    task_id = meta.get("task_id")
+    if not (video_title and task_id):
+        return
+    cleaned = translate.clean_video_title(video_title)
+    if not cleaned or cleaned == video_title:
+        return
+    meta["video_title"] = cleaned
+    _update_meta(task_id, video_title=cleaned)
+    old_alias = meta.get("project_folder_name")
+    if old_alias:
+        stale = PROJECTS_DIR / old_alias
+        if stale.is_symlink():
+            with suppress(OSError):
+                stale.unlink()
+        meta["project_folder_name"], meta["project_dir"] = _sync_project_folder_alias(task_id, cleaned)
+
+
 def _status(meta: dict) -> TaskStatusResponse:
+    _repair_stored_title(meta)
     video_title = meta.get("video_title")
     task_id = meta.get("task_id")
     if not video_title and task_id:
@@ -352,6 +388,8 @@ def _status(meta: dict) -> TaskStatusResponse:
         stream_mode=meta.get("stream_mode", "streaming"),
         duration_mode=meta.get("duration_mode", "speed_audio"),
         original_audio_volume=meta.get("original_audio_volume", 0.2),
+        separate_original=bool(meta.get("separate_original")),
+        original_track=bool(meta.get("original_track")),
         preview_ready=meta.get("preview_ready", False),
         preview_url=meta.get("preview_url"),
         preview_duration=meta.get("preview_duration", 0.0),
@@ -362,6 +400,8 @@ def _status(meta: dict) -> TaskStatusResponse:
         video_title=video_title,
         project_folder_name=proj_folder_name,
         project_dir=proj_dir,
+        campaign_id=meta.get("campaign_id"),
+        market=meta.get("market"),
     )
 
 
@@ -534,6 +574,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                 gemini_api_format=api_format,
                 log_cb=log_cb,
                 skip_translated=True,  # 续传模式：保留已翻译的分段
+                extra_instructions=req.translation_instructions,
             )
 
         attempted = [seg for seg in segments if "translated_fallback" in seg]
@@ -570,14 +611,34 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             logger.warning("生成视频标题失败: %s", e)
             _sync_project_folder_alias(task_id)
 
-        if req.duration_mode == "slow_video":
+        if req.pause_after == "translate":
+            await _update_meta_async(task_id, stage=TaskStage.AWAITING_REVIEW.value, progress=50,
+                                     message="译文已就绪，等待 Agent 合规审核与人工确认")
+            log_cb("Agent", "翻译完成，任务已暂停，等待审核修订后继续配音合成", "info")
+            return
+
+        # 成片里只渲染配音；原声单独成轨，播放时实时调音量，导出时再按音量混入。
+        original_track = task_dir / mixer.ORIGINAL_TRACK
+        if req.duration_mode not in RETIMED_MODES:
+            has_original = original_track.exists() or await mixer.extract_original_track(video_path, original_track)
+        else:
+            has_original = False  # 变速模式在画面重排后生成
+        await _update_meta_async(task_id, separate_original=True, original_track=has_original, mixed_volume=None)
+
+        if req.duration_mode in RETIMED_MODES:
             await _update_meta_async(task_id, stage=TaskStage.SYNTHESIZING.value, progress=85,
                                      message="生成原速配音，按配音时长适配画面")
-            log_cb("画面适配", "按配音时长放慢画面，使用整片合成；较短配音保持画面原速", "info")
+            if req.duration_mode == "adaptive":
+                log_cb("画面适配", "画面随配音双向变速：配音长则放慢画面，配音短则适度加快；"
+                       "画面 0.6–1.25 倍、配音最多提速 1.25 倍", "info")
+            else:
+                log_cb("画面适配", "按配音时长放慢画面，使用整片合成；较短配音保持画面原速", "info")
             rendered = await tts.synthesize_clips(task_dir, segments, req.voice, mimo_api_key, log_cb=log_cb)
             await _update_meta_async(task_id, stage=TaskStage.MIXING.value, progress=95,
                                      message="按段调整画面、原声和字幕时间轴")
-            await retiming.merge_to_dub_duration(task_dir, video_path, segments, rendered, orig_vol)
+            await retiming.merge_to_dub_duration(task_dir, video_path, segments, rendered, 0.0,
+                                                 mode=req.duration_mode)
+            await _update_meta_async(task_id, original_track=original_track.exists())
         elif req.stream_mode != "batch" and len(segments) > 0:
             # 4. 流式分片增量渲染阶段（断点续传检查）
             duration_total = await audio.probe_duration(video_path)
@@ -627,7 +688,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                         )
                         chunk_path = await mixer.merge_chunk(
                             task_dir, video_path, rel_segs, w_start, w_dur, i,
-                            original_volume=orig_vol,
+                            original_volume=0.0,
                         )
 
                     chunk_paths.append(chunk_path)
@@ -690,7 +751,7 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
                 log_cb("视频合并", "⚡ 发现已有完整成片 final.mp4 缓存，秒级导出就绪", "success")
             else:
                 log_cb("视频合并", "启动 FFmpeg 全片画面、配音音轨与字幕轨高精度合并...")
-                await mixer.merge(task_dir, video_path, segments, original_volume=orig_vol)
+                await mixer.merge(task_dir, video_path, segments, original_volume=0.0)
                 log_cb("视频合并", "高清成片渲染完毕，输出 final.mp4 导出准备就绪", "success")
 
         await _update_meta_async(task_id, stage=TaskStage.COMPLETE.value, progress=100,
@@ -707,8 +768,8 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             try:
                 dest_dir = Path(out_dir)
                 dest_dir.mkdir(parents=True, exist_ok=True)
-                final_src = task_dir / "final.mp4"
-                if final_src.exists():
+                if (task_dir / "final.mp4").exists():
+                    final_src = await _export_video_path(task_id)
                     dest = dest_dir / _friendly_export_name(meta_now)
                     await asyncio.to_thread(shutil.copy2, str(final_src), str(dest))
                     log_cb("自动归档", f"成片已自动导出至输出目录: {dest}", "success")
@@ -741,6 +802,25 @@ async def _run_pipeline(task_id: str, req: TaskStartRequest) -> None:
         await _execute_pipeline(task_id, req)
 
 
+# 这些模式按配音时长重排画面时间轴，必须整片合成，并使用 subtitles_retimed.json。
+RETIMED_MODES = frozenset({"slow_video", "adaptive"})
+
+RENDER_ARTIFACT_PATTERNS = (
+    mixer.ORIGINAL_TRACK, mixer.MIXED_EXPORT, "final.mp4", "preview.mp4", "chunk_*.mp4", "chunk_*.ass", "dub_*.wav", "dubbed_audio.wav",
+    "subtitles_retimed.json", "subtitles_zh.ass", "subtitles_zh.srt",
+)
+
+
+async def _invalidate_renders(task_id: str) -> None:
+    """译文改动后删除已渲染产物（TTS 分段缓存按内容哈希保留，未改动的句子不会重新合成）。"""
+    task_dir = _task_dir(task_id)
+    for pattern in RENDER_ARTIFACT_PATTERNS:
+        for path in task_dir.glob(pattern):
+            path.unlink(missing_ok=True)
+    await _update_meta_async(task_id, preview_ready=False, preview_url=None, preview_duration=0,
+                             chunks=[], total_chunks=1, completed_chunks=0, rendered_seconds=0)
+
+
 def _task_finished(task_id: str, task: asyncio.Task) -> None:
     _background_tasks.discard(task)
     if _active_tasks.get(task_id) is task:
@@ -760,15 +840,22 @@ async def start_task(task_id: str, req: TaskStartRequest) -> TaskStatusResponse:
         raise HTTPException(status_code=409, detail="task is already running")
 
     # 变速模式的时间轴不同，切换/重试时不可复用旧成片、分片或字幕。
-    if req.duration_mode == "slow_video" or previous.get("duration_mode") == "slow_video":
+    if req.duration_mode in RETIMED_MODES or previous.get("duration_mode") in RETIMED_MODES:
         task_dir = _task_dir(task_id)
-        for pattern in ("final.mp4", "preview.mp4", "chunk_*.mp4", "dub_*.wav", "dubbed_audio.wav",
+        for pattern in (mixer.ORIGINAL_TRACK, mixer.MIXED_EXPORT,
+                        "final.mp4", "preview.mp4", "chunk_*.mp4", "dub_*.wav", "dubbed_audio.wav",
                         "subtitles_retimed.json", "subtitles_zh.ass", "subtitles_zh.srt"):
             for path in task_dir.glob(pattern):
                 path.unlink(missing_ok=True)
-        req.stream_mode = "batch" if req.duration_mode == "slow_video" else req.stream_mode
+        req.stream_mode = "batch" if req.duration_mode in RETIMED_MODES else req.stream_mode
         await _update_meta_async(task_id, preview_ready=False, preview_url=None, preview_duration=0,
                                  chunks=[], total_chunks=1, completed_chunks=0, rendered_seconds=0)
+    elif not previous.get("separate_original"):
+        # 旧版本渲染的分片/成片已把原声混进去，不能和单独的原声轨叠加播放，需重新渲染。
+        task_dir = _task_dir(task_id)
+        for pattern in ("final.mp4", "preview.mp4", "chunk_*.mp4"):
+            for path in task_dir.glob(pattern):
+                path.unlink(missing_ok=True)
 
     await _update_meta_async(task_id, stage=TaskStage.PENDING.value, progress=0,
                  message="已开始", error=None, source_lang=req.source_lang, target_lang=req.target_lang,
@@ -795,6 +882,10 @@ async def list_tasks() -> list[dict]:
             continue
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            try:
+                _repair_stored_title(meta)
+            except Exception:
+                logger.debug("规整历史标题失败 (非关键错误)", exc_info=True)
             if not meta.get("video_title"):
                 derived = _title_from_subtitles(task_dir, meta.get("target_lang", "zh"))
                 if derived:
@@ -827,12 +918,55 @@ async def task_subtitles(task_id: str) -> list[SubtitleSegment]:
     src = task_dir / "subtitles_src.json"
     path = translated if translated.exists() else src
     retimed = task_dir / "subtitles_retimed.json"
-    if meta.get("duration_mode") == "slow_video" and retimed.exists():
+    if meta.get("duration_mode") in RETIMED_MODES and retimed.exists():
         path = retimed
     if not path.exists():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
     return [SubtitleSegment(**seg) for seg in data]
+
+
+class SubtitleEditItem(BaseModel):
+    index: int
+    translated_text: str = Field(..., max_length=1000)
+
+
+class SubtitleEditRequest(BaseModel):
+    edits: list[SubtitleEditItem] = Field(default_factory=list, max_length=2000)
+
+
+@router.put("/task/{task_id}/subtitles", response_model=list[SubtitleSegment])
+async def edit_task_subtitles(task_id: str, req: SubtitleEditRequest) -> list[SubtitleSegment]:
+    """修改译文后清理已渲染产物；重新开始任务时只重配改动过的句子（TTS 按内容缓存）。"""
+    meta = _read_meta(task_id)
+    active = _active_tasks.get(task_id)
+    if active is not None and not active.done():
+        raise HTTPException(status_code=409, detail="任务正在处理中，请完成后再编辑字幕")
+    path = _task_dir(task_id) / f"subtitles_{meta.get('target_lang', 'zh')}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="暂无译文字幕")
+    segments = json.loads(path.read_text(encoding="utf-8"))
+    by_index = {int(seg.get("index", i)): seg for i, seg in enumerate(segments)}
+    changed = 0
+    for edit in req.edits:
+        seg = by_index.get(edit.index)
+        text = edit.translated_text.strip()
+        if seg is None or not text or text == seg.get("translated_text"):
+            continue
+        seg["translated_text"] = text
+        seg["translated_fallback"] = False
+        changed += 1
+    if changed:
+        # 先删旧成片再写译文：Windows 上播放中的文件删不掉时直接 409，不留下「译文已改、成片残缺」的状态。
+        try:
+            await _invalidate_renders(task_id)
+        except OSError as exc:
+            raise HTTPException(status_code=409, detail="成片正在被播放器占用，请暂停播放后重试") from exc
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+        _append_log(task_id, "字幕编辑", f"已修改 {changed} 条译文，重新合成后生效", "info")
+    return [SubtitleSegment(**seg) for seg in segments]
 
 
 @router.get("/task/{task_id}/subtitles/export")
@@ -857,11 +991,15 @@ async def export_task_subtitles(
 
 
 @router.get("/task/{task_id}/audio/{track}")
-async def task_audio(task_id: str, track: str) -> FileResponse:
+async def task_audio(task_id: str, track: str, request: Request) -> Response:
     task_dir = _task_dir(task_id)
     if track == "tts":
         path, media = task_dir / "dubbed_audio.wav", "audio/wav"
     elif track == "original":
+        # 优先返回与成片时间轴对齐的原声轨（播放器需要 Range 才能拖动）。
+        aligned = task_dir / mixer.ORIGINAL_TRACK
+        if aligned.exists():
+            return range_file_response(aligned, request, media_type="audio/mp4")
         path, media = task_dir / "audio.aac", "audio/aac"
     else:
         raise HTTPException(status_code=400, detail="track must be 'tts' or 'original'")
@@ -870,11 +1008,48 @@ async def task_audio(task_id: str, track: str) -> FileResponse:
     return FileResponse(str(path), media_type=media, filename=path.name)
 
 
+_export_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _export_video_path(task_id: str) -> Path:
+    """返回可交付的成片：按任务当前的原声音量把原声混入只含配音的 final.mp4（结果缓存）。"""
+    task_dir = _task_dir(task_id)
+    final = task_dir / "final.mp4"
+    if not final.exists():
+        raise HTTPException(status_code=404, detail="final video not ready")
+    lock = _export_locks.setdefault(task_id, asyncio.Lock())
+    async with lock:
+        meta = _read_meta(task_id)
+        track = task_dir / mixer.ORIGINAL_TRACK
+        volume = round(max(0.0, float(meta.get("original_audio_volume", 0.2) or 0.0)), 2)
+        # 旧任务的成片已含原声；原片无音轨或音量为 0 时成片即交付物。
+        if not meta.get("separate_original") or not track.exists() or volume <= 0:
+            return final
+        mixed = task_dir / mixer.MIXED_EXPORT
+        if (mixed.exists() and meta.get("mixed_volume") == volume
+                and mixed.stat().st_mtime >= final.stat().st_mtime):
+            return mixed
+        await mixer.mix_original_into(final, track, mixed, volume)
+        await _update_meta_async(task_id, mixed_volume=volume)
+        return mixed
+
+
+class OriginalVolumeRequest(BaseModel):
+    volume: float = Field(..., ge=0.0, le=1.0)
+
+
+@router.put("/task/{task_id}/original-volume")
+async def set_original_volume(task_id: str, req: OriginalVolumeRequest) -> dict:
+    """播放器实时调节的原声音量；导出、打包、归档都按这个值混音。"""
+    _read_meta(task_id)
+    volume = round(req.volume, 2)
+    await _update_meta_async(task_id, original_audio_volume=volume)
+    return {"original_audio_volume": volume}
+
+
 @router.get("/task/{task_id}/export")
 async def task_export(task_id: str) -> FileResponse:
-    path = _task_dir(task_id) / "final.mp4"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="final video not ready")
+    path = await _export_video_path(task_id)
 
     meta = _read_meta(task_id)
     export_filename = _friendly_export_name(meta)
@@ -1063,12 +1238,14 @@ async def delete_task(task_id: str) -> dict:
         with suppress(asyncio.CancelledError):
             await active_task
     deleted = False
+    _remove_project_aliases(task_dir)
     if task_dir.exists():
         await asyncio.to_thread(shutil.rmtree, task_dir, True)
         deleted = True
     if upload_dir.exists():
         await asyncio.to_thread(shutil.rmtree, upload_dir, True)
         deleted = True
+    _export_locks.pop(task_id, None)
     if not deleted:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"success": True, "message": "Task deleted"}
@@ -1315,7 +1492,7 @@ async def analyze_task_subtitles(task_id: str, req: AIAnalyzeRequest) -> AIAnaly
     src = task_dir / "subtitles_src.json"
     path = translated if translated.exists() else src
     retimed = task_dir / "subtitles_retimed.json"
-    if meta.get("duration_mode") == "slow_video" and retimed.exists():
+    if meta.get("duration_mode") in RETIMED_MODES and retimed.exists():
         path = retimed
 
     if not path.exists():

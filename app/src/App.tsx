@@ -2,12 +2,13 @@ import { useState, useCallback, useEffect, lazy, Suspense } from 'react'
 import { Routes, Route, useNavigate, useParams, Navigate } from 'react-router-dom'
 import { AlertTriangle, ExternalLink, Loader2 } from 'lucide-react'
 import { useTheme } from './hooks/useTheme'
-import { GithubIcon } from './components/GithubIcon'
 import { ChangelogModal } from './components/ChangelogModal'
 import Navbar from './components/Navbar'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { getRuntimeHealth, getTaskStatus, type RuntimeHealth, type TaskStatus } from './lib/api'
 import { clearActiveTaskId, loadActiveTaskId, saveActiveTaskId } from './lib/task-session'
+import './culture.css'
+import './sail.css'
 
 const UploadState = lazy(() => import('./components/UploadState'))
 const ProcessingState = lazy(() => import('./components/ProcessingState'))
@@ -16,6 +17,8 @@ const BatchState = lazy(() => import('./components/BatchState'))
 const HistoryView = lazy(() => import('./components/HistoryView'))
 const VoiceLibrary = lazy(() => import('./components/VoiceLibrary'))
 const PerformancePage = lazy(() => import('./components/PerformancePage'))
+const AgentHome = lazy(() => import('./components/agent/AgentHome'))
+const CampaignPage = lazy(() => import('./components/agent/CampaignPage'))
 
 function PageFallback() {
   return (
@@ -43,6 +46,12 @@ function TaskPage() {
     getTaskStatus(taskId)
       .then((st) => {
         setStatus(st)
+        if (st.stage === 'awaiting_review' && st.campaign_id) {
+          // 出海子任务在译文审核阶段暂停，交给 Agent 会话页继续。
+          clearActiveTaskId()
+          navigate(`/campaign/${st.campaign_id}`, { replace: true })
+          return
+        }
         if (st.stage === 'complete') {
           setStage('result')
           clearActiveTaskId()
@@ -131,7 +140,7 @@ export default function App() {
 
       try {
         const st = await getTaskStatus(savedId)
-        if (st.stage === 'complete' || st.stage === 'error') {
+        if (st.stage === 'complete' || st.stage === 'error' || st.stage === 'awaiting_review') {
           clearActiveTaskId()
           setActiveProcessingTaskId(null)
         } else {
@@ -154,7 +163,7 @@ export default function App() {
     saveActiveTaskId(id)
     getTaskStatus(id)
       .then((st) => {
-        if (st.stage !== 'complete' && st.stage !== 'error') {
+        if (st.stage !== 'complete' && st.stage !== 'error' && st.stage !== 'awaiting_review') {
           setActiveProcessingTaskId(id)
         } else {
           clearActiveTaskId()
@@ -178,7 +187,7 @@ export default function App() {
   }, [navigate])
 
   return (
-    <div className="relative flex flex-col bg-background w-full min-h-screen">
+    <div className="culture-shell relative flex flex-col bg-background w-full min-h-screen">
       <Navbar
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -217,7 +226,9 @@ export default function App() {
         <AppErrorBoundary>
           <Suspense fallback={<PageFallback />}>
             <Routes>
-              <Route path="/" element={<HomePage />} />
+              <Route path="/" element={<AgentHome />} />
+              <Route path="/studio" element={<HomePage />} />
+              <Route path="/campaign/:campaignId" element={<CampaignPage />} />
               <Route path="/batch" element={<BatchState />} />
               <Route path="/task/:taskId" element={<TaskPage />} />
               <Route
@@ -240,19 +251,10 @@ export default function App() {
       <footer className="w-full border-t border-border/40 py-3 px-6 text-xs text-muted-foreground glass-panel">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-            <span>视译宝 - 本地视频转译与智能字幕配音系统</span>
+            <span>声帆 SailVoice · 一句话，让中国故事走向世界，让世界佳作走进中国</span>
             <ChangelogModal />
           </div>
-          <a
-            href="https://github.com/deijing/shiyibao"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors font-medium cursor-pointer"
-          >
-            <GithubIcon className="w-4 h-4" />
-            <span>GitHub 开源仓库 (deijing/shiyibao)</span>
-            <ExternalLink className="w-3 h-3 opacity-60" />
-          </a>
+          <span className="text-slate-400 dark:text-slate-500">© 2026 声帆 SailVoice</span>
         </div>
       </footer>
     </div>

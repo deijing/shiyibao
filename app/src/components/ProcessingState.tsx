@@ -4,13 +4,10 @@ import {
   Languages,
   Mic,
   Check,
-  Bot,
   AlertCircle,
   Terminal,
   Radio,
   Copy,
-  Sparkles,
-  Wand2,
   RotateCcw,
   Volume2,
   Maximize2,
@@ -19,9 +16,13 @@ import {
   ArrowLeft,
   ShieldCheck,
   ChevronRight,
+  AudioLines,
+  Clapperboard,
+  MonitorPlay,
 } from 'lucide-react'
 import { getTaskStatus, getTaskLogs, getSubtitles, startTask, type TaskStatus, type TaskLogItem, type SubtitleSegment } from '@/lib/api'
 import { clearActiveTaskId } from '@/lib/task-session'
+import { useNavigate } from 'react-router-dom'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import TaskDetailDrawer from './TaskDetailDrawer'
@@ -159,7 +160,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
         source_lang: status?.source_lang || settings.sourceLang,
         target_lang: status?.target_lang || settings.targetLang,
         stream_mode: (status?.stream_mode as 'streaming' | 'batch') || 'streaming',
-        duration_mode: status?.duration_mode ?? settings.durationMode ?? 'speed_audio',
+        duration_mode: status?.duration_mode ?? settings.durationMode ?? 'adaptive',
         original_audio_volume: status?.original_audio_volume ?? settings.originalAudioVolume ?? 0.2,
       }
       await startTask(taskId, config)
@@ -174,6 +175,8 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
     }
   }
 
+  const navigate = useNavigate()
+
   const pollData = useCallback(async () => {
     try {
       const s = await getTaskStatus(taskId)
@@ -186,7 +189,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
         s.stage === 'translating'
       const [latestLogs, realSubs] = await Promise.all([
         getTaskLogs(taskId),
-        earlyStage || (s.duration_mode === 'slow_video' && s.stage === 'complete') || !subtitlesFrozenRef.current
+        earlyStage || ((s.duration_mode === 'slow_video' || s.duration_mode === 'adaptive') && s.stage === 'complete') || !subtitlesFrozenRef.current
           ? getSubtitles(taskId).catch(() => [] as SubtitleSegment[])
           : Promise.resolve(null as SubtitleSegment[] | null),
       ])
@@ -220,6 +223,17 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
         }
       }
 
+      if (s.stage === 'awaiting_review' && s.campaign_id) {
+        // 出海子任务翻译完成后暂停，回到 Agent 会话页做审核与确认。
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
+        clearActiveTaskId()
+        navigate(`/campaign/${s.campaign_id}`)
+        return
+      }
+
       if (s.stage === 'error') {
         setError(s.error ?? '处理过程中发生错误')
         if (intervalRef.current) {
@@ -247,7 +261,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
     } catch {
       // 网络错误，继续轮询
     }
-  }, [taskId, onComplete])
+  }, [taskId, onComplete, navigate])
 
   useEffect(() => {
     pollData()
@@ -311,7 +325,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
         </div>
         <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-2 text-slate-900 dark:text-slate-100 flex items-center justify-center gap-2.5">
           <div className="p-2 rounded-xl bg-gradient-to-br from-purple-500/20 via-purple-500/10 to-indigo-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 shadow-2xs shrink-0">
-            <Wand2 className="w-5.5 h-5.5" />
+            <Clapperboard className="w-5.5 h-5.5" />
           </div>
           <span>AI 视频智能转译控制台</span>
         </h2>
@@ -361,7 +375,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
             <div className="flex items-center gap-2">
               <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-ping" />
               <h3 className="font-extrabold text-slate-900 dark:text-slate-100 text-sm sm:text-base flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-emerald-500" />
+                <MonitorPlay className="h-4 w-4 text-emerald-500" />
                 流式视频秒开与后台增量缓冲 (Tencent Stream Engine)
               </h3>
             </div>
@@ -699,7 +713,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
                           <div className="p-3 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/60">
                             <div className="flex items-center justify-between text-[10px] text-indigo-600 dark:text-indigo-400 font-mono mb-1">
                               <span className="flex items-center gap-1">
-                                <Sparkles className="w-3 h-3" /> GEMINI AI TRANSLATION
+                                <Languages className="w-3 h-3" /> GEMINI AI TRANSLATION
                               </span>
                               <span className="text-emerald-600 dark:text-emerald-400 font-bold">Live</span>
                             </div>
@@ -710,7 +724,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
                         </>
                       ) : (
                         <div className="py-8 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 text-xs gap-2">
-                          <Bot className="w-6 h-6 text-indigo-500 animate-bounce" />
+                          <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
                           <span>{subCountMsg}</span>
                         </div>
                       )}
@@ -755,7 +769,7 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
                         <div className="absolute inset-0 rounded-full bg-blue-500/20 animate-pulse-ring" />
                         <div className="absolute inset-2 rounded-full bg-purple-500/30 animate-ping" style={{ animationDuration: '3s' }} />
                         <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center shadow-md z-10">
-                          <Bot className="w-5 h-5 text-white" />
+                          <AudioLines className="w-5 h-5 text-white" />
                         </div>
                       </div>
 

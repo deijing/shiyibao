@@ -111,7 +111,7 @@ def get_user_settings() -> dict:
         "xiaomiTtsKey": MIMO_API_KEY,
         "mimoVoice": MIMO_DEFAULT_VOICE,
         "targetLang": "zh",
-        "durationMode": "speed_audio",
+        "durationMode": "adaptive",
     }
     if USER_SETTINGS_PATH.exists():
         try:

@@ -1,6 +1,36 @@
 import asyncio
+import base64
+
+import httpx
 
 from server.services import tts
+
+
+def test_language_context_is_sent_to_mimo_and_invalidates_cached_audio(tmp_path):
+    requests = []
+
+    class Client:
+        async def post(self, url, *, headers, json):
+            requests.append(json)
+            return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [{"message": {"audio": {
+                "data": base64.b64encode(b"generated-wave" * 20).decode(),
+            }}}]})
+
+    async def scenario():
+        client = Client()
+        segment = {"index": 0, "start": 0.0, "end": 2.0, "translated_text": "文化", "tts_context": "Speak Japanese."}
+        first = await tts._synthesize_single_utterance(client, tmp_path, 0, segment, "Mia", "test-key", 1)
+        repeated = await tts._synthesize_single_utterance(client, tmp_path, 0, segment, "Mia", "test-key", 1)
+        changed = await tts._synthesize_single_utterance(
+            client, tmp_path, 0, {**segment, "tts_context": "Speak Korean."}, "Mia", "test-key", 1,
+        )
+        assert first[2] == repeated[2]
+        assert first[2] != changed[2]
+
+    asyncio.run(scenario())
+    assert len(requests) == 2
+    assert requests[0]["messages"][0]["content"] == "Speak Japanese."
+    assert requests[1]["messages"][0]["content"] == "Speak Korean."
 
 
 def test_atempo_filters_split_high_speed_ratios() -> None:

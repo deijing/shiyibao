@@ -23,7 +23,7 @@ jobs:
       matrix:
         include:
           # 必须带上 app：只打 dmg 时 Tauri 会把 .app 当中间产物删掉
-          # （日志里的 "Cleaning ...视译宝.app"），下面的启动验证就无从跑起。
+          # （日志里的 "Cleaning ...华章.app"），下面的启动验证就无从跑起。
           - name: macOS ARM64 (Apple Silicon)
             os: macos-latest
             target: aarch64-apple-darwin
@@ -114,13 +114,13 @@ jobs:
         with:
           args: --bundles ${{ matrix.bundles }} --target ${{ matrix.target }}
 
-      # bundle 目录名取 productName（视译宝），可执行文件名取 Cargo 包名（shiyibao），
+      # bundle 目录名取 productName（华章），可执行文件名取 Cargo 包名（shiyibao），
       # 两者并不相同。
       - name: Verify packaged macOS app
         if: runner.os == 'macOS'
         run: >-
           python scripts/test_packaged_desktop.py
-          --app "src-tauri/target/${{ matrix.target }}/release/bundle/macos/视译宝.app/Contents/MacOS/shiyibao"
+          --app "src-tauri/target/${{ matrix.target }}/release/bundle/macos/华章.app/Contents/MacOS/shiyibao"
 
       - name: Install and verify Windows NSIS app
         if: runner.os == 'Windows'
@@ -206,7 +206,7 @@ jobs:
           printf '构建产物：\n'
           printf '  %s\n' "${files[@]}"
 
-          # Tauri 用 productName（中文「视译宝」）作文件名前缀，而 GitHub Release 的
+          # Tauri 用 productName（中文「华章」）作文件名前缀，而 GitHub Release 的
           # 资产名不接受非 ASCII 字符、会直接剥掉，用户下到的就是 _0.1.5_aarch64.dmg，
           # 完全看不出是什么包。复制成 ASCII 前缀再发布。
           mkdir -p release-assets
@@ -228,7 +228,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: "视译宝 ${{ steps.artifacts.outputs.version }}"
+          name: "华章 ${{ steps.artifacts.outputs.version }}"
           body: |
             ## 下载说明
 
@@ -239,7 +239,7 @@ jobs:
             | `*_x64-setup.exe` | Windows 64 位 |
 
             安装包未做代码签名：macOS 首次打开若提示「已损坏」，执行
-            `xattr -dr com.apple.quarantine /Applications/视译宝.app` 后重开；
+            `xattr -dr com.apple.quarantine /Applications/华章.app` 后重开；
             Windows 会弹出 SmartScreen，选择「更多信息 → 仍要运行」。
             应用需要本机已安装带 libass 的 FFmpeg。
 

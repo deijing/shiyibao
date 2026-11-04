@@ -16,7 +16,7 @@ import {
   FolderOpen,
   FolderOutput,
   Search,
-  Sparkles,
+  Info,
 } from 'lucide-react'
 import {
   uploadVideo,
@@ -627,7 +627,7 @@ export default function BatchState() {
             source_lang: currentSettings.sourceLang || 'auto',
             target_lang: item.targetLang,
             stream_mode: currentSettings.streamMode || 'streaming',
-            duration_mode: currentSettings.durationMode || 'speed_audio',
+            duration_mode: currentSettings.durationMode || 'adaptive',
             original_audio_volume: currentSettings.originalAudioVolume ?? 0.2,
             output_dir: archiveOutputDir,
           })
@@ -644,7 +644,7 @@ export default function BatchState() {
             source_lang: currentSettings.sourceLang || 'auto',
             target_lang: item.targetLang,
             stream_mode: currentSettings.streamMode || 'streaming',
-            duration_mode: currentSettings.durationMode || 'speed_audio',
+            duration_mode: currentSettings.durationMode || 'adaptive',
             original_audio_volume: currentSettings.originalAudioVolume ?? 0.2,
             output_dir: archiveOutputDir,
           })
@@ -754,7 +754,7 @@ export default function BatchState() {
 
       {infoMessage && (
         <Alert className="mb-2 py-2 rounded-xl text-xs border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0">
-          <Sparkles className="h-3.5 w-3.5 text-emerald-500" />
+          <Info className="h-3.5 w-3.5 text-emerald-500" />
           <AlertDescription className="ml-2 font-medium">{infoMessage}</AlertDescription>
         </Alert>
       )}

@@ -154,6 +154,8 @@ def main() -> int:
         "yt_dlp",
         "--copy-metadata",
         "yt-dlp",
+        "--add-data",
+        f"{ROOT / 'app' / 'public' / 'samples'}{os.pathsep}samples",
     ]
 
     if args.bundle_ffmpeg:

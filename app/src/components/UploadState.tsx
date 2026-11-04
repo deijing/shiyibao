@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { ArrowLeftRight, Upload, Sparkles, PartyPopper, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Zap, Volume2, VolumeX, RefreshCcw, Link2 } from 'lucide-react'
+import { ArrowLeftRight, Upload, AlertCircle, Terminal, FileText, CheckCircle2, Clock, Volume2, VolumeX, RefreshCcw, Link2, Film, Loader2, MonitorPlay } from 'lucide-react'
 import { uploadVideo, createTaskFromUrl, startTask, fetchServerSettings, fetchGeminiModels } from '@/lib/api'
 import { saveActiveTaskId } from '@/lib/task-session'
+import { CURRENT_VERSION } from '@/lib/changelog'
 import {
   loadSettings,
   saveSettings,
@@ -176,7 +177,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
       source_lang: current.sourceLang || 'auto',
       target_lang: current.targetLang || 'zh',
       stream_mode: current.streamMode || 'streaming',
-      duration_mode: current.durationMode || 'speed_audio',
+      duration_mode: current.durationMode || 'adaptive',
       original_audio_volume: origVol,
     })
 
@@ -210,7 +211,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
       setStatusText('正在上传视频源文件...')
       setProgressWidth('15%')
       setProgressPercent(15)
-      addLog('上传至云端转译节点中...', '传输', 'process')
+      addLog('上传至本地视频处理服务中...', '传输', 'process')
 
       const { task_id } = await uploadVideo(file, ({ loaded, total, percent }) => {
         const loadedMb = (loaded / (1024 * 1024)).toFixed(1)
@@ -256,6 +257,12 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
       setError('请粘贴视频链接')
       addLog('错误：未填写视频链接', '校验', 'info')
       return
+    }
+    // B 站 / 抖音等分享文案带标题，如 "【标题】 https://www.bilibili.com/video/BV…"，只取其中的链接。
+    const shared = url.match(/https?:\/\/[^\s<>"'，。！？；、【】（）《》「」]+/i)
+    if (shared && shared[0] !== url) {
+      url = shared[0].replace(/[.,;:!?)\]}]+$/, '')
+      setVideoUrl(url)
     }
     if (!/^https?:\/\//i.test(url) && /^[\w.-]+\.[a-z]{2,}([/:].*)?$/i.test(url)) {
       url = `https://${url}`
@@ -323,7 +330,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
   }
 
   return (
-    <div className="relative flex-grow flex items-center justify-center px-4 sm:px-6 lg:px-8 xl:px-12 py-4 sm:py-6 lg:py-8 overflow-y-auto">
+    <div className="culture-studio relative flex-grow flex items-center justify-center px-4 sm:px-6 lg:px-8 xl:px-12 py-4 sm:py-6 lg:py-8 overflow-y-auto">
       {/* 科技感极淡微网格背景 */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#e2e8f018_1px,transparent_1px),linear-gradient(to_bottom,#e2e8f018_1px,transparent_1px)] bg-[size:3.5rem_3.5rem] dark:bg-[linear-gradient(to_right,#1e293b25_1px,transparent_1px),linear-gradient(to_bottom,#1e293b25_1px,transparent_1px)] [mask-image:radial-gradient(ellipse_70%_70%_at_50%_50%,#000_60%,transparent_100%)] pointer-events-none" />
 
@@ -336,16 +343,16 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
         {/* 左侧 65%：主工作区 (核心拖拽上传) */}
         <div className="w-full lg:w-[65%] flex flex-col justify-center">
           {/* 左侧头部标语区 */}
-          <div className="mb-4 sm:mb-6">
+          <div className="culture-studio-heading mb-4 sm:mb-6">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/60 mb-2.5 sm:mb-3.5 shadow-2xs">
-              <PartyPopper className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>SaaS 工作台 · 高维 AI 音视频转译</span>
+              <Film className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <span>华章 · 中国文化跨语言传播</span>
             </div>
             <h1 className="text-2xl sm:text-3xl lg:text-4xl xl:text-5xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 leading-tight mb-2 sm:mb-3">
-              AI 赋能，打破语言边界
+              让中国故事，跨越语言。
             </h1>
             <p className="text-xs sm:text-sm lg:text-base text-slate-500 dark:text-slate-400 max-w-xl leading-relaxed font-normal">
-              一键实现海外视频高精度字幕翻译与母语级音色重构。支持拖拽本地文件，或粘贴 YouTube / B站 / 抖音链接一键翻译。
+              为文化记录、非遗讲述与文博内容制作多语言字幕和配音。上传视频或粘贴链接，让原有的故事被更多人听见。
             </p>
           </div>
 
@@ -460,7 +467,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`w-full relative cursor-pointer group transition-all duration-300 ease-out rounded-3xl p-8 sm:p-12 flex flex-col items-center justify-center min-h-[320px] text-center overflow-hidden backdrop-blur-2xl border hover-card-lift ${
+            className={`culture-upload-zone w-full relative cursor-pointer group transition-all duration-300 ease-out rounded-3xl p-8 sm:p-12 flex flex-col items-center justify-center min-h-[320px] text-center overflow-hidden backdrop-blur-2xl border hover-card-lift ${
               isDragging
                 ? 'border-blue-500/60 dark:border-blue-400/60 bg-blue-50/30 dark:bg-slate-900/80 shadow-2xl shadow-blue-500/10 scale-[1.01] ring-2 ring-blue-500/20'
                 : 'bg-white/60 dark:bg-slate-900/50 border-white/80 dark:border-slate-800/80 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] hover:border-slate-300 dark:hover:border-slate-700'
@@ -492,7 +499,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
 
                 <div className="mt-8 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 dark:text-slate-500">
                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/40">
-                    <Zap className="w-3 h-3 text-blue-500" /> 4K 高清解析
+                    <MonitorPlay className="w-3 h-3 text-blue-500" /> 4K 高清解析
                   </span>
                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/40">
                     <Clock className="w-3 h-3 text-blue-500" /> 秒级处理响应
@@ -505,7 +512,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
             {morphing && (
               <div className="w-full max-w-md flex flex-col items-center justify-center py-4 animate-in fade-in duration-300">
                 <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-800/60 flex items-center justify-center mb-5 shadow-xs">
-                  <Sparkles className="w-6 h-6 text-blue-600 dark:text-blue-400 animate-spin" />
+                  <Loader2 className="w-6 h-6 text-blue-600 dark:text-blue-400 animate-spin" />
                 </div>
                 <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100 mb-1">
                   {statusText}
@@ -528,7 +535,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
           <form
             onSubmit={handleUrlTranslate}
             onClick={(e) => e.stopPropagation()}
-            className="mt-4 w-full p-2 sm:p-2.5 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
+            className="culture-url-form mt-4 w-full p-2 sm:p-2.5 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
           >
             <div className="flex items-center gap-2 flex-1 min-w-0 px-2">
               <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
@@ -547,7 +554,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
             <button
               type="submit"
               disabled={morphing}
-              className="h-9 px-4 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white shrink-0 cursor-pointer transition-colors"
+              className="culture-url-submit h-9 px-4 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white shrink-0 cursor-pointer transition-colors"
             >
               一键翻译
             </button>
@@ -651,7 +658,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
 
         {/* 右侧 35%：日志 / 交互侧边面板 */}
         <div className="w-full lg:w-[35%] flex flex-col">
-          <div className="w-full h-full bg-slate-50/80 dark:bg-slate-900/40 border border-slate-200/80 dark:border-slate-800/80 rounded-3xl p-6 sm:p-7 flex flex-col justify-between backdrop-blur-md shadow-xs min-h-[420px]">
+          <div className="culture-activity w-full h-full bg-slate-50/80 dark:bg-slate-900/40 border border-slate-200/80 dark:border-slate-800/80 rounded-3xl p-6 sm:p-7 flex flex-col justify-between backdrop-blur-md shadow-xs min-h-[420px]">
             {/* 面板头部 */}
             <div className="flex items-center justify-between pb-4 border-b border-slate-200/60 dark:border-slate-800/60 mb-5">
               <div className="flex items-center gap-2">
@@ -863,7 +870,7 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
                 </div>
               </div>
 
-              <span className="text-slate-400 dark:text-slate-500 text-[10px] shrink-0">工作台 v2.4</span>
+              <span className="text-slate-400 dark:text-slate-500 text-[10px] shrink-0">工作台 {CURRENT_VERSION}</span>
             </div>
           </div>
         </div>

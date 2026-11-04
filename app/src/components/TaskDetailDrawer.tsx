@@ -1,10 +1,25 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import {
-  ChevronLeft, FileVideo, CheckCircle2, XCircle, Loader2,
-  Download, FileText, RotateCcw, Copy, Check, Terminal,
-  Clock, Languages, Mic, Sparkles, ArrowDownCircle, RefreshCw,
-  AlertCircle
+  ChevronLeft,
+  FileVideo,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Download,
+  FileText,
+  RotateCcw,
+  Copy,
+  Check,
+  Terminal,
+  Clock,
+  Languages,
+  Mic,
+  ArrowDownCircle,
+  RefreshCw,
+  AlertCircle,
+  ListOrdered,
 } from 'lucide-react'
+import { exportAfterVolumeSaved } from '@/lib/original-track'
 import { getTaskStatus, getTaskLogs, getExportUrl, getSubtitles, startTask, getThumbnailUrl, type TaskStatus, type TaskLogItem } from '@/lib/api'
 import { loadSettings } from './SettingsPanel'
 import { Button } from '@/components/ui/button'
@@ -306,7 +321,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                   <FileText className="w-3.5 h-3.5" />
                   导出字幕
                 </Button>
-                <a href={getExportUrl(taskId)} download>
+                <a href={getExportUrl(taskId)} download onClick={exportAfterVolumeSaved(taskId)}>
                   <Button
                     size="sm"
                     className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded-xl gap-1.5 shadow-xs cursor-pointer"
@@ -408,7 +423,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
               {/* 核心区域一：可视化步骤条 */}
               <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-6">
                 <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-6 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-indigo-500" />
+                  <ListOrdered className="w-4 h-4 text-indigo-500" />
                   宏观转译流程进度 (Pipeline Stepper)
                 </h3>
 

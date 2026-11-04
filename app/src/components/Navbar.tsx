@@ -1,6 +1,5 @@
 import { Bell, CheckCircle2, Clock3, Sun, Moon, Loader2, ChevronRight, ShieldCheck, Menu, Globe } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { GithubIcon } from './GithubIcon'
 import { ChangelogModal } from './ChangelogModal'
 import SettingsPanel from './SettingsPanel'
 import { EnvironmentCheckModal } from './EnvironmentCheckModal'
@@ -13,7 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useTaskNotifications } from '@/hooks/useTaskNotifications'
 
-export type Page = 'home' | 'batch' | 'history' | 'voices' | 'performance'
+export type Page = 'home' | 'studio' | 'batch' | 'history' | 'voices' | 'performance'
 
 interface NavbarProps {
   theme: 'light' | 'dark'
@@ -26,9 +25,10 @@ interface NavbarProps {
 }
 
 const NAV_ITEMS: { page: Page; path: string; label: string }[] = [
-  { page: 'home', path: '/', label: '首页' },
-  { page: 'batch', path: '/batch', label: '批量模式' },
-  { page: 'history', path: '/history', label: '历史项目' },
+  { page: 'home', path: '/', label: '出海工作台' },
+  { page: 'studio', path: '/studio', label: '单片精修' },
+  { page: 'batch', path: '/batch', label: '批量出海' },
+  { page: 'history', path: '/history', label: '作品档案' },
   { page: 'voices', path: '/voices', label: '音色库' },
   { page: 'performance', path: '/performance', label: '性能调度' },
 ]
@@ -72,10 +72,11 @@ export default function Navbar({
   // 根据路径确定当前页面；非顶层导航路由（如 /task/:id）不高亮任何标签。
   let currentActivePage: Page | null
   if (location.pathname === '/batch') currentActivePage = 'batch'
+  else if (location.pathname === '/studio') currentActivePage = 'studio'
   else if (location.pathname === '/history') currentActivePage = 'history'
   else if (location.pathname === '/voices') currentActivePage = 'voices'
   else if (location.pathname === '/performance') currentActivePage = 'performance'
-  else if (location.pathname === '/') currentActivePage = 'home'
+  else if (location.pathname === '/' || location.pathname.startsWith('/campaign/')) currentActivePage = 'home'
   else currentActivePage = propActivePage ?? null
 
 
@@ -85,30 +86,23 @@ export default function Navbar({
   }
 
   return (
-    <nav className="w-full border-b border-border glass-panel sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+    <nav className="culture-nav w-full border-b border-border glass-panel sticky top-0 z-50">
+      <div className="max-w-[1440px] mx-auto px-4 sm:px-8 h-20 flex items-center justify-between gap-4">
         <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-3.5 cursor-pointer group" onClick={() => handleNav('home', '/')}>
-            <img
-              src="/logo.png"
-              alt="视译宝 Logo"
-              className="h-6 sm:h-7 md:h-8 w-auto object-contain shrink-0 transition-transform group-hover:scale-105"
-            />
-            <span className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-              视译宝
-            </span>
-          </div>
-          <ChangelogModal />
+          <button type="button" aria-label="声帆 SailVoice，返回出海工作台" className="culture-brand" onClick={() => handleNav('home', '/')}>
+            <span className="culture-brand-mark" aria-hidden="true">帆</span><span className="culture-brand-name">声帆<small>SAILVOICE</small></span>
+          </button>
+          <span className="culture-nav-version"><ChangelogModal /></span>
         </div>
 
         {/* 桌面端标准导航 */}
-        <div className="hidden md:flex items-center gap-6 lg:gap-8 text-sm font-medium text-muted-foreground">
+        <div className="hidden xl:flex items-center gap-5 text-sm font-medium text-muted-foreground">
           {NAV_ITEMS.map(({ page, path, label }) => (
             <button
               key={page}
               onClick={() => handleNav(page, path)}
               className={`relative cursor-pointer transition-colors ${currentActivePage === page
-                  ? 'text-foreground after:content-[""] after:absolute after:bottom-[-22px] after:left-0 after:w-full after:h-0.5 after:bg-violet-600 dark:after:bg-violet-400 font-semibold'
+                  ? 'text-foreground after:content-[""] after:absolute after:bottom-[-22px] after:left-0 after:w-full after:h-0.5 after:bg-[var(--sail-red)] font-semibold'
                   : 'hover:text-foreground'
                 }`}
             >
@@ -118,7 +112,7 @@ export default function Navbar({
         </div>
 
         {/* 移动端 / 小屏悬浮导航下拉菜单 */}
-        <div className="flex md:hidden items-center">
+        <div className="flex xl:hidden items-center ml-auto">
           <DropdownMenu>
             <DropdownMenuTrigger
               aria-label="切换功能页面"
@@ -144,7 +138,7 @@ export default function Navbar({
           </DropdownMenu>
         </div>
 
-        <div className="flex items-center gap-3.5">
+        <div className="flex items-center gap-2">
           {activeProcessingTaskId && onOpenProcessingTask && (
             <button
               onClick={onOpenProcessingTask}
@@ -157,58 +151,45 @@ export default function Navbar({
             </button>
           )}
 
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggleTheme}
-            className="rounded-full bg-surface2 hover:bg-accent transition cursor-pointer"
-            title={theme === 'dark' ? '切换为浅色模式' : '切换为深色模式'}
-          >
-            {theme === 'dark' ? (
-              <Sun className="w-4 h-4 text-muted-foreground" />
-            ) : (
-              <Moon className="w-4 h-4 text-muted-foreground" />
-            )}
-          </Button>
           <a
             href="https://shiyibao-web.vercel.app/"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-9 items-center gap-1.5 px-3 rounded-full bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800/80 text-xs font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/80 transition-all cursor-pointer shadow-2xs"
-            title="视译宝官方网站 (shiyibao-web.vercel.app)"
+            className="nav-link-pill hidden sm:inline-flex"
+            title="声帆官方网站"
           >
-            <Globe className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-            <span className="hidden sm:inline">官网</span>
+            <Globe className="w-3.5 h-3.5" />
+            <span>官网</span>
           </a>
-          <a
-            href="https://github.com/deijing/shiyibao"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex h-9 items-center gap-1.5 px-3 rounded-full bg-surface2 hover:bg-accent border border-slate-200/60 dark:border-slate-800/80 text-xs font-medium text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white transition-all cursor-pointer shadow-2xs"
-            title="GitHub 开源仓库 (deijing/shiyibao)"
+          <span className="hidden sm:block h-5 w-px bg-border mx-1" aria-hidden="true" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleTheme}
+            className="nav-icon-btn"
+            title={theme === 'dark' ? '切换为浅色模式' : '切换为深色模式'}
           >
-            <GithubIcon className="w-4 h-4 text-slate-800 dark:text-slate-100" />
-            <span className="hidden sm:inline font-semibold">GitHub</span>
-          </a>
-          <EnvironmentCheckModal
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </Button>
+          <span className="culture-system-health"><EnvironmentCheckModal
             trigger={
               <Button
                 variant="ghost"
                 size="icon"
-                className="rounded-xl border-0 bg-slate-100/80 dark:bg-slate-800/80 hover:bg-slate-200/80 dark:hover:bg-slate-700/80 transition-all duration-200"
+                className="nav-icon-btn"
                 title="环境健康度与依赖检测"
               >
-                <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 stroke-[1.5]" />
+                <ShieldCheck className="w-4 h-4" />
               </Button>
             }
-          />
+          /></span>
           <SettingsPanel />
           <DropdownMenu onOpenChange={(open) => open && markAllRead()}>
             <DropdownMenuTrigger
               aria-label={unreadCount > 0 ? `任务通知，${unreadCount} 条未读` : '任务通知'}
-              className="relative inline-flex h-9 w-9 items-center justify-center rounded-full bg-surface2 hover:bg-accent transition outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 cursor-pointer"
+              className="nav-icon-btn relative inline-flex h-9 w-9 items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-[var(--sail-blue)]/40"
             >
-              <Bell className={`w-4 h-4 ${unreadCount > 0 ? 'text-violet-600 dark:text-violet-400' : 'text-muted-foreground'}`} />
+              <Bell className={`w-4 h-4 ${unreadCount > 0 ? 'text-[var(--sail-blue)]' : ''}`} />
               {unreadCount > 0 && (
                 <span className="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-[10px] leading-4 font-bold text-white text-center shadow-sm ring-2 ring-background">
                   {unreadCount > 9 ? '9+' : unreadCount}

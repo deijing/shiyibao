@@ -23,6 +23,13 @@ def test_normalize_video_url_accepts_https():
     assert normalize_video_url(f"  {url}  ") == url
 
 
+def test_normalize_video_url_extracts_link_from_share_text():
+    url = "https://www.bilibili.com/video/BV1YA4F6sE9Y"
+    assert normalize_video_url(f"【DeepSeek 提出的 Super Agent 解决了什么问题？】 {url}") == url
+    assert normalize_video_url(f"看看这个{url}?p=2，太好了") == f"{url}?p=2"
+    assert normalize_video_url("复制打开 https://b23.tv/abc123 。") == "https://b23.tv/abc123"
+
+
 def test_normalize_video_url_rejects_blank_and_file_scheme():
     try:
         normalize_video_url("   ")

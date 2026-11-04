@@ -1,0 +1,197 @@
+[
+  {
+    "id": "culture-jianzhan",
+    "scenario": "culture",
+    "tag": "非遗制瓷 · 全球英语",
+    "title": "建盏窑变：泥与火中的星空",
+    "filename": "heritage_jianzhan.mp4",
+    "poster": "/samples/culture-jianzhan.jpg",
+    "source_file": "culture-jianzhan-source.mp4",
+    "dubbed_file": "culture-jianzhan-dubbed.mp4",
+    "duration": 20.6,
+    "width": 1280,
+    "height": 720,
+    "source_lang": "zh",
+    "dub_market": "global",
+    "dub_lang": "en",
+    "dub_label": "🌐 MiMo 英语译配 · Dean",
+    "markets": [
+      "global"
+    ],
+    "highlight": "MiMo 英语讲述建盏匠人与窑火，保留文化意象",
+    "prompt": "把这段建盏烧制短片翻成英语，面向对中国手工艺感兴趣的海外观众，保留建盏 Jianzhan 和匠人姓名，自然解释泥与火的文化意象，并生成 YouTube Shorts 标题与简介。",
+    "source_author": "匠仓",
+    "source_title": "1300℃火焰的窑变，竟烧出了梵高的“星空”！",
+    "source_url": "https://www.bilibili.com/video/BV14R4y117so/",
+    "source_bvid": "BV14R4y117so",
+    "clip_start": 45.75,
+    "clip_end": 66.35,
+    "poster_time": 0.6,
+    "segments": [
+      {
+        "index": 0,
+        "start": 0.17,
+        "end": 2.21,
+        "source_text": "星汉灿烂，若出其里。",
+        "dubbed_text": "Stars emerge from within.",
+        "translation_note": "以简短诗意译法保留星空意象"
+      },
+      {
+        "index": 1,
+        "start": 2.41,
+        "end": 7.33,
+        "source_text": "这是建盏匠人危敏捷用一抔泥创造的浪漫。",
+        "dubbed_text": "The poetic beauty Jianzhan artisan Wei Minjie makes from clay."
+      },
+      {
+        "index": 2,
+        "start": 8.11,
+        "end": 10.83,
+        "source_text": "用一窑火烧出的神奇。",
+        "dubbed_text": "Magic fired in a kiln."
+      },
+      {
+        "index": 3,
+        "start": 14.05,
+        "end": 16.37,
+        "source_text": "七十二小时的烈火烧灼。",
+        "dubbed_text": "Seventy-two hours of blazing fire."
+      },
+      {
+        "index": 4,
+        "start": 17.64,
+        "end": 20.32,
+        "source_text": "一半人工，一半天成。",
+        "dubbed_text": "Half handmade, half nature's work."
+      }
+    ],
+    "tts_voice": "Dean",
+    "translation_provider": "mimo",
+    "translation_model": "mimo-v2.6-flash",
+    "tts_provider": "mimo",
+    "tts_model": "mimo-v2.5-tts",
+    "dub_revision": "e9958f1837ba"
+  },
+  {
+    "id": "culture-tea",
+    "scenario": "culture",
+    "tag": "宋代点茶 · 日本观众",
+    "title": "宋代点茶：茶器十二先生",
+    "filename": "heritage_song_tea.mp4",
+    "poster": "/samples/culture-tea.jpg",
+    "source_file": "culture-tea-source.mp4",
+    "dubbed_file": "culture-tea-dubbed.mp4",
+    "duration": 19.5,
+    "width": 1280,
+    "height": 720,
+    "source_lang": "zh",
+    "dub_market": "jp",
+    "dub_lang": "ja",
+    "dub_label": "🇯🇵 MiMo 日语译配 · Mia",
+    "markets": [
+      "jp"
+    ],
+    "highlight": "MiMo 日语解释宋代茶器，保留器具雅称与点茶文化",
+    "prompt": "把这段宋代点茶器具讲解翻成日语，给对中国茶文化感兴趣的日本观众看，保留陶宝文与汤提点等器具雅称，自然解释器具用途，并生成文化传播短视频标题与简介。",
+    "source_author": "学茶研习社",
+    "source_title": "宋代点茶的茶器居然还有名字，真得佩服老祖宗的想象力！",
+    "source_url": "https://www.bilibili.com/video/BV15L4y1A78K/",
+    "source_bvid": "BV15L4y1A78K",
+    "clip_start": 117.85,
+    "clip_end": 137.35,
+    "poster_time": 6.5,
+    "segments": [
+      {
+        "index": 0,
+        "start": 0.28,
+        "end": 6.94,
+        "source_text": "那第九位先生呢，是陶宝文，就是茶盏啦。这里特指黑釉的茶盏哈。",
+        "dubbed_text": "陶宝文は、黒釉の茶碗です。",
+        "translation_note": "保留器具雅称，并补充茶碗这一用途解释"
+      },
+      {
+        "index": 1,
+        "start": 6.94,
+        "end": 11.2,
+        "source_text": "因为保温性能比较好，所以专门被用来做点茶。",
+        "dubbed_text": "保温に優れ、点茶に使います。"
+      },
+      {
+        "index": 2,
+        "start": 11.22,
+        "end": 19.49,
+        "source_text": "第十位先生呢，是汤提点。这个呢，是我们常见的汤瓶。在点茶的时候，用它来注入热水。",
+        "dubbed_text": "湯提点は、点茶で湯を注ぐための湯瓶です。"
+      }
+    ],
+    "tts_voice": "Mia",
+    "translation_provider": "mimo",
+    "translation_model": "mimo-v2.6-flash",
+    "tts_provider": "mimo",
+    "tts_model": "mimo-v2.5-tts",
+    "dub_revision": "568bed046e77",
+    "tts_instructions": "Speak only the provided Japanese text in natural Japanese, including kanji. Do not translate it into English or Chinese. Clear documentary narration.",
+    "translation_review": "按原片发声窗口校对并精简日、韩语译文"
+  },
+  {
+    "id": "culture-papercut",
+    "scenario": "culture",
+    "tag": "中国剪纸 · 韩国观众",
+    "title": "纸上生花：中国剪纸的纹样语言",
+    "filename": "heritage_jianzhi_papercut.mp4",
+    "poster": "/samples/culture-papercut-real.jpg",
+    "source_file": "culture-papercut-source.mp4",
+    "dubbed_file": "culture-papercut-dubbed.mp4",
+    "duration": 20.3,
+    "width": 1280,
+    "height": 720,
+    "source_lang": "zh",
+    "dub_market": "kr",
+    "dub_lang": "ko",
+    "dub_label": "🇰🇷 MiMo 韩语译配 · Chloe",
+    "markets": [
+      "kr"
+    ],
+    "highlight": "MiMo 韩语解读中国剪纸，呈现纹样与艺术传承",
+    "prompt": "把这段中国剪纸纹样科普翻成韩语，面向韩国年轻观众，自然解释剪纸纹样相连、艺术传承的文化含义，并生成文化传播短视频标题和标签。",
+    "source_author": "纹藏",
+    "source_title": "纸上生花：原来中国剪纸的美是“千刻不落，万剪不断”！",
+    "source_url": "https://www.bilibili.com/video/BV1DQ4y1e7mW/",
+    "source_bvid": "BV1DQ4y1e7mW",
+    "clip_start": 28.65,
+    "clip_end": 48.95,
+    "poster_time": 5.2,
+    "segments": [
+      {
+        "index": 0,
+        "start": 0.19,
+        "end": 7.97,
+        "source_text": "而剪纸作为古老与独特的民间艺术，它的语言是千刻不落，万剪不断。",
+        "dubbed_text": "중국 전지는 오려도 무늬가 이어집니다.",
+        "translation_note": "用意译表达镂空纹样彼此相连的特点"
+      },
+      {
+        "index": 1,
+        "start": 8.21,
+        "end": 12.85,
+        "source_text": "以圆点、月牙、锯齿等构成剪纸的肌理。",
+        "dubbed_text": "점과 초승달, 톱니 모양이 무늬를 이룹니다."
+      },
+      {
+        "index": 2,
+        "start": 13.0,
+        "end": 20.16,
+        "source_text": "以色彩、质地以及思想情感，构成千百年来剪纸之下流动不断的血液。",
+        "dubbed_text": "색과 질감, 감정이 전통의 생명력입니다."
+      }
+    ],
+    "tts_voice": "Chloe",
+    "translation_provider": "mimo",
+    "translation_model": "mimo-v2.6-flash",
+    "tts_provider": "mimo",
+    "tts_model": "mimo-v2.5-tts",
+    "dub_revision": "d48ee3d8c4bc",
+    "tts_instructions": "Speak only the provided Korean text in natural Korean. Do not translate it into English or Chinese. Clear documentary narration.",
+    "translation_review": "按原片发声窗口校对并精简日、韩语译文"
+  }
+]

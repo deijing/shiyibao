@@ -1,343 +1,82 @@
-<div align="center">
+# 声帆 SailVoice v2.3.0
 
-<br />
+**一句话，让中国故事走向世界，让世界佳作走进中国。**
 
-<img src="app/public/logo.png" width="280" alt="ShiYiBao Logo" />
+比赛分支：`codex/culture-competition`。基于视译宝 ShiYiBao 的技术基座，采用「声帆」品牌及海蓝 #0B4F8A、中国红 #C8102E 的视觉，服务中国视频与文化内容的多语种出海。
 
-# 视译宝 (ShiYiBao) v0.1.11
+本分支保留原有功能与处理逻辑。首页直接进入视频工坊；产品内不设置文化策划、知识库或参赛准备模块。
 
-### 全自动化 AI 视频跨语言转译、多模型智能翻译与原声音色克隆重构工作台
+## 当前功能
 
-[![Official Website](https://img.shields.io/badge/Official_Website-shiyibao--web.vercel.app-7c3aed?logo=vercel&logoColor=white&style=for-the-badge)](https://shiyibao-web.vercel.app/)
-[![GitHub Repository](https://img.shields.io/badge/GitHub-deijing%2Fshiyibao-blue?logo=github&style=for-the-badge)](https://github.com/deijing/shiyibao)
-[![Version](https://img.shields.io/badge/Version-v0.1.11-8b5cf6?style=for-the-badge)](https://github.com/deijing/shiyibao/releases)
-[![License](https://img.shields.io/badge/License-MIT-emerald?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blueviolet?style=for-the-badge)](https://github.com/deijing/shiyibao/releases)
-[![Tauri](https://img.shields.io/badge/Tauri-v2.0-FFC107?logo=tauri&logoColor=black&style=for-the-badge)](https://tauri.app)
-[![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=black&style=for-the-badge)](https://react.dev)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white&style=for-the-badge)](https://fastapi.tiangolo.com)
+- 本地视频上传，或粘贴支持的视频平台链接获取素材。
+- 必剪 ASR 语音识别，多模型字幕翻译，MiMo 预设音色配音，FFmpeg 成片合成。
+- 保留原片时长并加速配音，或按配音时长放慢画面，同步原声与字幕。
+- SRT、VTT、TXT、JSON 字幕文件导出，支持仅译文、仅原文及双语。
+- 批量处理、历史项目、音色库、性能调度及原有字幕问答功能。
+- FastAPI 后端、React Web 前端与 Tauri 桌面外壳。
 
-[🌐 **官方网站**](https://shiyibao-web.vercel.app/) • [🐳 Docker 启动](#-docker-一键启动) • [📖 快速开始](#-快速开始) • [✨ 核心特性](#-核心特性) • [🧠 适配 AI 大模型](#-适配-ai-at-大模型) • [🌐 多语言翻译](#-多语言全语种互译) • [🏗️ 系统架构](#-系统架构) • [⚙️ 配置说明](#%EF%B8%8F-配置说明)
+语言设置当前覆盖中、英、日、韩、法、德、西、俄。配音使用现有音色接口，未实现自主训练语音模型或声音克隆。原声保留通过降低原片整轨音量后与配音混合，未独立分离人声与 BGM。成片烧录为译文字幕；文化含义、地域差异和译文正确性需要人工校审。
 
-</div>
+## 本地运行
 
----
-
-> [!IMPORTANT]
-> **视译宝 (ShiYiBao)** 是一款为视频创作者、跨国学习者与内容团队打造的全自动化 AI 视频转译与重构工作台。上传任意视频，系统自动完成**音轨分离、高精度 ASR 识别、多大模型语义重构翻译、MiMo 高保真声纹克隆配音、FFmpeg 时间轴对齐与 BGM 自动混流**，最终导出全高清带中外双语字幕的定制成片与字幕文件！
-
----
-
-## ⚡ AI Agent 一键部署 (Recommended)
-
-> **给用户的提示**：如果您使用的是 **Cursor、Claude Code、Codex、Windsurf、Trea、WorkBuddy、OpenCode、Pi、Bolt、Roo Code** 或任意 AI 编程 Agent，只需复制以下指令直接发给您的 AI Agent，它即可全自动为您拉取代码到本地、安装环境依赖并一键启动应用！
-
-```text
-请按照以下步骤为我全自动克隆仓库、安装依赖并启动【视译宝 ShiYiBao】音视频AI翻译应用：
-
-1. 克隆 GitHub 仓库到本地：
-   - 运行：git clone https://github.com/deijing/shiyibao.git
-   - 进入项目目录：cd shiyibao
-
-2. 安装 Python 与 Node 环境依赖：
-   - 检查并创建 Python 虚拟环境：若不存在 `.venv`，运行 `python3 -m venv .venv` 创建。
-   - 激活 `.venv` 并安装 Python 后端依赖：运行 `. .venv/bin/activate && pip install -r requirements.txt`。
-   - 进入 `app/` 目录安装前端 Node 依赖：运行 `cd app && npm ci && cd ..`。
-
-3. 检查系统基础设施：
-   - 确认系统 PATH 中已包含带 libass 字幕烧录支持的 FFmpeg 和 Node.js (>=20.19 或 >=22.12)。
-
-4. 一键拉起双模服务：
-   - 在已激活的 Python 虚拟环境下，从项目根目录运行一键启动脚本：
-     . .venv/bin/activate && python start.py
-   - 说明：`start.py` 会在后台同时守护拉起 FastAPI 后端 (http://127.0.0.1:8000) 与 React Vite 前端 (http://127.0.0.1:5173)。
-
-5. 自动验证与交付：
-   - 执行 Curl 健康检查验证后端状态：`curl -s http://127.0.0.1:8000/api/health`
-   - 确认返回 {"status":"ok", ...} 并且 Vite 服务准备就绪后，向我汇报部署完成，并输出前端入口：http://127.0.0.1:5173/。
-```
-
----
-
-## ✨ 核心特性
-
-<div justify="center">
-
-| 特性分类 | 核心亮点与技术优势 |
-| :--- | :--- |
-| **🌐 全语种双向互译** | 支持 **英文 ⇄ 中文**、日/韩/法/德/西/俄等全球主要语种任意互相重构转译，自动保持上下文标点与口语化表达 |
-| **🧠 多 AI 大模型生态** | 深度集成 **Gemini 3.1 Pro / 3.6 Flash**、**OpenAI (GPT-5.6 Sol / GPT-4o)**、**DeepSeek (V4 / R1 深度推理)**、**Claude 3.6 Sonnet**、**MiMo**、**Ollama 私有大模型** 与标准自定义 API |
-| **🎙️ 声纹克隆与配音** | 小米 MiMo 多音色高保真 TTS 语音合成，内置冰糖、甜美、沉稳、男声、英文等多角色预设库，FFmpeg 智能保留原片 BGM |
-| **🖥️ 独立双卡片工作台** | 16:9 原画视频主卡片 + 独立白底字幕/AI 学习卡片 (`gap-5` 优雅分离)，支持字幕实时滑动居中跟随定位 |
-| **💬 交互式 AI 问答助教** | 内置高对比度 `MarkdownRenderer`，提供结构化**核心摘要**、**学习大纲**与**交互式 AI 字幕对话流 (Chat Thread)** |
-| **⚡ 60fps 极速性能引擎** | 15fps 时间同步防抖节流阀 + SVG 波形 `useMemo` 预计算 + `React.memo` 增量卡片刷新，播放流畅零掉帧 |
-| **🛡️ 断点续传与 AIMD 控速** | 5 重 Checkpoint 检查点秒级复用 (音轨/ASR/翻译/切片/成片)，AIMD 动态自适应控速器防御 429 限流 |
-| **📦 跨平台原生桌面** | 基于 Tauri v2 + PyInstaller 动态 FastAPI 边车，原生适配 macOS (Apple Silicon/Intel) 与 Windows 10/11 |
-
-</div>
-
----
-
-## 🧠 适配 AI 大模型
-
-视译宝不再局限于单一服务商，全新引入统一的大模型适配层 (Unified LLM Adapter)，无缝对接云端与本地私有大模型：
-
-```mermaid
-flowchart LR
-    A[视译宝 翻译/分析引擎] --> B{统一大模型适配层}
-    B --> C["Google Gemini (Gemini 3.1 Pro / 3.6 Flash / 2.5 Pro)"]
-    B --> D["OpenAI (GPT-5.6 Sol / GPT-4o / o3-mini)"]
-    B --> E["DeepSeek (V4 / R1 深度思考模型)"]
-    B --> F["Anthropic Claude (3.6 Sonnet / Opus 5 / 3.5 Sonnet)"]
-    B --> G["Ollama / LocalAI (本地私有化局域网模型)"]
-    B --> H["自定义 OpenAI 兼容接口 (v1/chat/completions)"]
-```
-
-> [!TIP]
-> **智能退避与多 Key 轮换机制**：当 AI 大模型服务遭遇 429 Rate Limit (请求过载) 时，系统将自动触发 AIMD (加性增大/乘性减小) 拥塞控制算法，配合指数退避与多 API Key 自动轮换，确保百页长视频转译 100% 稳健完成。
-
----
-
-## 🌐 多语言全语种互译
-
-视译宝支持全球主流语种之间的无缝双向转译与语义重构，完美解决跨国学习与海外视频本地化痛点：
-
-- **🇨🇳 中文 ⇄ 🇺🇸 英语**（支持美音/英音自然音色配音）
-- **🇨🇳 中文 ⇄ 🇯🇵 日语**（ACG 动漫与日剧口语化优雅重构）
-- **🇨🇳 中文 ⇄ 🇰🇷 韩语**（影视与综艺自然口语转译）
-- **法语 / 德语 / 西班牙语 / 俄语 / 意大利语 / 葡萄牙语 / 阿拉伯语** 等多语种全方位覆盖。
-
----
-
-## 🖥️ 独立双卡片 60fps 极速工作台
-
-界面采用现代化 SaaS 独立卡片分离设计，左侧为经典 **16:9 原画视频制作区**，右侧为 **白底高对比字幕与 AI 智能卡片**：
-
-| <img src="app/public/logo.png" width="18" align="center" /> 16:9 原画视频主制作区 | 📝 独立白底字幕与 AI 学习卡片 |
-| :--- | :--- |
-| • **实时流式秒开播放器**：支持 4K 原画流畅播放<br>• **音视频多轨时间轴**：V1 (视频) / S1 (字幕) / A1 (原音) / A2 (配音)<br>• **180 根 SVG 动态声纹**：预渲染声纹图，播放毫秒级对齐 | • **标签 1 (双语字幕列表)**：支持双语/译文/原文切换与滑动居中跟随<br>• **标签 2 (AI 学习大纲)**：一键提炼核心摘要与结构化知识大纲<br>• **标签 3 (AI 问答助教)**：交互式连续对话流 (Chat Thread) |
-
-> [!NOTE]
-> **字幕导出格式支持**：支持一键导出包含精准时间戳的 **`.srt`**、**`.vtt`**、**`.txt`**、**`.json`** 文本以及一键复制全量字幕交由第三方 AI 深度分析。
-
----
-
-## 🏗️ 系统架构
-
-视译宝采用 **Tauri v2 + FastAPI PyInstaller 边车** 的先进桌面与 Web 双模架构：
-
-```mermaid
-graph TD
-    Client["React 19 + TailwindCSS 桌面前端 (WebView2 / WKWebView)"]
-    Bridge["Tauri v2 Rust 原生外壳 (IPC 桥接 / 安全 Token 校验)"]
-    Sidecar["FastAPI 动态 Python 边车 (127.0.0.1 局域网回环)"]
-    
-    FFmpeg["FFmpeg 音视频处理引擎 (音轨抽取 / BGM 混流 / ASS 烧录)"]
-    ASR["BcutASR 语音识别服务"]
-    LLM["多模型 LLM 适配器 (Gemini / OpenAI / DeepSeek / Ollama)"]
-    TTS["MiMo 声纹合成引擎 (高保真 TTS)"]
-    Checkpoint["五重 Checkpoint 断点存储引擎 (workspace/projects/)"]
-
-    Client <-->|HTTP / WebSocket / Local Token| Sidecar
-    Client <-->|Rust IPC| Bridge
-    Sidecar --> FFmpeg
-    Sidecar --> ASR
-    Sidecar --> LLM
-    Sidecar --> TTS
-    Sidecar --> Checkpoint
-```
-
----
-
-## 🚀 快速开始
-
-> 💡 **提示**：本机已安装 Docker 时，优先使用下面的 Compose 一键启动；没有 Docker 时，可使用 [⚡ AI Agent 一键部署](#-ai-agent-一键部署-recommended) 或手动安装依赖。
-
-### 🐳 Docker 一键启动
-
-无需在宿主机安装 Python、Node.js 或 FFmpeg。镜像内已包含 FastAPI、构建后的 Web 控制台，以及带 libass 的 FFmpeg 与中文字体。
+需要 Python 3.10+（推荐 3.12）、Node.js 20.19+ 或 22.12+，以及带 libass、H.264、AAC 支持的 FFmpeg 和 FFprobe。
 
 ```bash
-git clone https://github.com/deijing/shiyibao.git
-cd shiyibao
-cp .env.example .env   # 可选：填入 GEMINI_API_KEY / MIMO_API_KEY 等
-docker compose up --build
-```
-
-启动后在浏览器打开：
-- 🌐 **Web 控制台**: http://localhost:8000
-- 📚 **API 文档**: http://localhost:8000/docs
-- 🩺 **健康检查**: http://localhost:8000/api/health
-
-若本机 `8000` 已被占用：
-
-```bash
-SHIYIBAO_PORT=8001 docker compose up --build
-```
-
-然后访问 http://localhost:8001 。
-
-任务视频与工程文件默认保存在 Docker 卷 `shiyibao-data` 中，重启容器不会丢失。密钥也可启动后在应用【偏好设置】里填写。
-
-不使用 Compose 时：
-
-```bash
-docker build -t shiyibao .
-docker run --name shiyibao --init -p 127.0.0.1:8000:8000 \
-  -e SHIYIBAO_DATA_DIR=/data \
-  -v shiyibao-data:/data \
-  shiyibao
-```
-
-若已准备 `.env`，可追加 `--env-file .env` 把密钥注入容器。
-
-> 默认只把端口发布到 `127.0.0.1`，与本地闭环安全模型一致。请通过 http://localhost:8000 访问；用局域网 IP 打开会被接口来源校验拦截。
-
-### 🛠️ 手动环境准备
-
-建议环境要求：
-- **Python**: 3.10 – 3.14（推荐 3.12）
-- **Node.js**: 20.19+ 或 22.12+
-- **FFmpeg**: 6.0+（必须包含 `libass`、`libx264` 与 `aac` 支持）
-- **Rust**: 1.77.2+（仅桌面端打包 / 本地开发需要）
-
-#### 1. 安装 FFmpeg
-
-- **macOS (Homebrew)**:
-  ```bash
-  brew tap homebrew-ffmpeg/ffmpeg
-  brew install homebrew-ffmpeg/ffmpeg/ffmpeg
-  ```
-
-- **Windows (WinGet)**:
-  ```powershell
-  winget install Gyan.FFmpeg
-  ```
-
-- **Ubuntu / Debian**:
-  ```bash
-  sudo apt update && sudo apt install ffmpeg -y
-  ```
-
-#### 2. 克隆仓库与安装依赖
-
-```bash
-# 1. 克隆开源仓库
-git clone https://github.com/deijing/shiyibao.git
-cd shiyibao
-
-# 2. 安装后端 Python 依赖
 python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# 3. 安装前端 React 依赖
-cd app
-npm ci
-cd ..
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+npm --prefix app ci
+python start.py
 ```
 
-#### 3. 配置密钥 (.env)
+必须在已激活的 `.venv` 中运行启动器。
 
-复制 `.env.example` 并填入您的 API 密钥：
+- [工作台](http://127.0.0.1:5173/)
+- [后端 API 文档](http://127.0.0.1:8000/docs)
+- [健康检查](http://127.0.0.1:8000/api/health)
+
+首页 `/` 为视频工坊；`/batch` 为批量制作，`/history` 为作品档案，`/voices` 为音色库，`/performance` 为性能调度。
+
+## 模型与存储
+
+完整视频流水线需要外部模型密钥、MiMo TTS 密钥及可访问的必剪 ASR 服务。可在【偏好设置】中配置，也可从 `.env.example` 复制环境变量示例：
 
 ```bash
 cp .env.example .env
 ```
 
-在 `.env` 中配置相关 Key（也可启动后在应用设置面板中图形化配置）：
+翻译模型的地址、协议和模型名称需与服务商实际支持情况一致。原片、字幕、任务与工程保存在系统用户数据目录的 `yishibao/workspace` 中；`SHIYIBAO_DATA_DIR` 可覆盖存储位置，`SHIYIBAO_FFMPEG_DIR` 可指定媒体工具目录。本分支保留原项目的数据与配置约定。
 
-```dotenv
-# 多模型 API Key 配置
-GEMINI_API_KEY=your_gemini_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
-
-# 小米 MiMo 语音合成 Key
-MIMO_API_KEY=your_mimo_api_key_here
-```
-
-#### 4. 启动应用
-
-**一键跨平台启动**：
+## 验证
 
 ```bash
-python start.py
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+npm --prefix app run lint
+npm --prefix app run build
 ```
 
-快捷启动入口：
-- **macOS / Linux**: `./start.sh`
-- **Windows**: 双击运行 `start.bat`
+测试使用临时数据目录。自动化检查不能替代真实云端流水线和目标语言质量验证。
 
-应用启动后将提供以下服务地址：
-- 🌐 **Web 控制台**: `http://localhost:5173`
-- 📚 **Interactive API Docs**: `http://localhost:8000/docs`
-- 🩺 **Health Check**: `http://localhost:8000/api/health`
+## 桌面与容器
 
----
-
-## 📦 桌面端打包 (Tauri v2)
-
-打包生产环境原生桌面安装包 (`.dmg` / `.exe`)：
+Web 开发不需要 Tauri。桌面打包额外安装根目录 npm 依赖与 Python 构建依赖：
 
 ```bash
-# 1. 安装构建依赖
-pip install -r requirements-build.txt
-
-# 2. 桌面开发预览模式
+source .venv/bin/activate
+python -m pip install -r requirements-build.txt
+npm ci
 npm run desktop:dev
-
-# 3. 打包当前平台原生安装包 (DMG / NSIS EXE)
-npm run desktop:build
+# 或 npm run desktop:build
 ```
 
-构建产物位置：
-- **macOS**: `src-tauri/target/release/bundle/dmg/`
-- **Windows**: `src-tauri/target/release/bundle/nsis/`
+比赛分支桌面名称为「华章」，应用标识为 `com.shiyibao.huazhang`，可执行包名仍为 `shiyibao`。产物位于 `src-tauri/target/release/bundle/`。桌面安装包需按目标平台另行验证。
 
----
+安装 Docker 后也可运行 `docker compose up --build`，访问 [本地容器工作台](http://localhost:8000/)。当前未部署评审用公网服务。
 
-## ⚙️ 配置说明
+## 比赛定位与来源
 
-| 环境变量 | 默认值 | 作用与说明 |
-| :--- | :---: | :--- |
-| `GEMINI_API_KEY` | 空 | Google Gemini 大模型 API Key |
-| `OPENAI_API_KEY` | 空 | OpenAI / DeepSeek / 兼容大模型 Key |
-| `MIMO_API_KEY` | 空 | 小米 MiMo 高保真 TTS 合成 Key |
-| `MAX_CONCURRENT_TASKS` | `4` | 后端最大并行处理任务数 (1–12) |
-| `TRANSLATE_CONCURRENCY` | `3` | AI 翻译并发分段数 (1–8) |
-| `TTS_CONCURRENCY` | `6` | MiMo 语音合成并发数 (1–16) |
-| `SUBTITLE_FONT` | `Arial` | ASS 硬字幕烧录字体名称 |
-| `SHIYIBAO_PORT` | `8000` | 后端 API 监听端口 (桌面端自动动态分配) |
-| `SHIYIBAO_DATA_DIR` | 用户数据目录 | 任务元数据、断点文件与工程目录保存位置 |
+[比赛定位与章程核对](docs/competition.md) 保留在仓库文档中，供准备申报与答辩材料时参考，不作为产品功能。比赛改造主要是场景定位、品牌与视觉，本次没有新增文化智能体、文化知识库或术语约束算法，不将这些能力写入申报成果。
 
----
-
-### 配音时长适配与环境诊断
-
-- 在【偏好设置 → 配音时长适配】中选择策略。默认“加速配音”保持原片时长；“视频适配配音时长”保留配音原速，在配音较长时放慢对应语句画面，并同步调整原声与字幕。新模式使用整片合成，完成后播放，渲染耗时与临时磁盘占用会增加。
-- Gemini 中转站请同时配置 API 地址、协议和可用模型。原生 Gemini 使用 `Gemini` 协议与 `x-goog-api-key`；仅提供 OpenAI 兼容接口的中转站请选择 `OpenAI`（Bearer 鉴权）。诊断和密钥测试会向当前模型发送一次简短生成请求，可能产生少量 token 费用，不要求中转站支持模型列表。
-- macOS 桌面启动会查找 Apple Silicon Homebrew、Intel Homebrew 和打包目录；未链接的 `ffmpeg-full` 也可识别。自定义安装可设置 `SHIYIBAO_FFMPEG_DIR` 指向同时包含 `ffmpeg`、`ffprobe` 的目录。诊断会区分执行失败/超时与缺少字幕滤镜；执行失败时请查看具体的权限、架构或动态库错误。
-
-## 🔒 本地安全与隐私保障
-
-1. **绝对本地闭环**：视译宝默认仅监听 `127.0.0.1` 回环网络，不向公网暴露开放端口。
-2. **多重安全防线**：所有 API 接口带精细 `Origin` / `Referer` 域名白名单校验与 Tauri 动态令牌 (`X-Shiyibao-Local-Token`) 保护，严格防止任何恶意网页窃取本地 API 密钥。
-3. **数据隐私控制**：任务视频、字幕工程与生成的成片均存储在本地系统用户数据目录 (`~/Library/Application Support/yishibao` 或 `%APPDATA%\com.shiyibao.desktop`)，可随时一键彻底抹除。
-
----
-
-## 📄 开源许可证
-
-本项目基于 [MIT License](LICENSE) 开源发布。欢迎提交 Issue 与 Pull Request 共同建设！
-
----
-
-<div align="center">
-
-**🌟 如果视译宝对您的学习或创作有所帮助，欢迎在 GitHub 上点个 Star 支持我们！**
-
-[https://github.com/deijing/shiyibao](https://github.com/deijing/shiyibao)
-
-</div>
+原项目、外部模型及团队新增工作应分别说明。原 README 标示 MIT，但仓库未发现独立 LICENSE 文件，送审或分发前需核实许可依据。视频、音乐、声音与出镜者应有必要授权；传播数据、用户与合作案例应有真实记录支持。

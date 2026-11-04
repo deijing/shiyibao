@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { History, CheckCircle2, Gift, Zap, Wrench, ShieldCheck, Tag } from 'lucide-react'
+import { History, CheckCircle2, Gift, Wrench, ShieldCheck, Tag, CirclePlus } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -135,7 +135,7 @@ export function ChangelogModal({ open, onOpenChange, trigger }: ChangelogModalPr
                   {activeRelease.details.features && activeRelease.details.features.length > 0 && (
                     <div className="space-y-1.5">
                       <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
-                        <Zap className="w-3 h-3" /> 新增功能
+                        <CirclePlus className="w-3 h-3" /> 新增功能
                       </span>
                       <ul className="list-disc list-inside text-xs text-slate-600 dark:text-slate-300 space-y-1 pl-1">
                         {activeRelease.details.features.map((item, i) => (

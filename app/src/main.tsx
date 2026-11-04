@@ -47,8 +47,8 @@ function DesktopBootstrap() {
 
   return (
     <main className="desktop-bootstrap">
-      <img className="desktop-bootstrap__logo" src="/logo.png" alt="视译宝" />
-      <h1>视译宝</h1>
+      <span className="culture-brand-mark" aria-hidden="true">华</span>
+      <h1>华章</h1>
       {failed ? (
         <>
           {/* 外壳换端口重试时会重建窗口，这里的计时也随之重来；真正走到这一步说明

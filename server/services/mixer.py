@@ -195,8 +195,12 @@ async def merge(
     out_path = task_dir / "final.mp4"
     subtitle_path = write_ass_subtitles(task_dir, segments)
     has_audio = await has_audio_stream(video_path)
-    # 无片源音轨时需要明确静音时长，避免 anullsrc 无限延长。
-    pad_duration = None if has_audio else (await probe_duration(video_path) or None)
+    # 以下两种情况需要明确的片长：
+    # - 无片源音轨：anullsrc 需要时长，否则会无限延长；
+    # - 原声静音：只输出配音轨，配音通常短于视频（最后一句之后无台词），
+    #   若不 apad 到片长，-shortest 会把成片在最后一句处截断。
+    needs_pad = not has_audio or original_volume <= 0.0
+    pad_duration = (await probe_duration(video_path) or None) if needs_pad else None
     filter_complex = _mix_filter_complex(
         duration=pad_duration,
         has_source_audio=has_audio,
@@ -303,4 +307,51 @@ async def concat_chunks(task_dir: Path, chunk_paths: list[Path], *, durations: l
         "-c", "copy", "-movflags", "+faststart",
         str(out_path), "-y",
     ])
+    return out_path
+
+
+# 成片视频里只含配音；原声单独存放在输出时间轴上，播放器实时调节音量，导出时再按音量混入。
+ORIGINAL_TRACK = "original_track.m4a"
+MIXED_EXPORT = "final_mixed.mp4"
+
+
+async def extract_original_track(source: Path, out_path: Path, *, copy: bool = False) -> bool:
+    """把原声抽成独立的 m4a；无音轨时返回 False。copy=True 用于已是 aac 的变速成片。"""
+    if not await has_audio_stream(source):
+        out_path.unlink(missing_ok=True)
+        return False
+    tmp = out_path.with_name(f"{out_path.stem}.tmp.m4a")
+    codec = ["-c:a", "copy"] if copy else ["-c:a", "aac", "-b:a", "160k", "-ac", "2", "-ar", "44100"]
+    try:
+        await run_ffmpeg([
+            "-i", str(source), "-map", "0:a:0", "-vn", *codec,
+            "-movflags", "+faststart", str(tmp), "-y",
+        ])
+        tmp.replace(out_path)
+    finally:
+        tmp.unlink(missing_ok=True)  # 失败时清理半成品；成功时已被 replace 移走
+    return True
+
+
+async def mix_original_into(video_path: Path, original_path: Path, out_path: Path,
+                            original_volume: float) -> Path:
+    """在只含配音的成片上按音量叠加原声；画面直接复制，只重编码音轨。"""
+    vol = max(0.0, float(original_volume))
+    filter_complex = (
+        f"[1:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={vol:.3f}[bg];"
+        "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[dub];"
+        # 以配音轨（与画面等长）为准，原声多出或不足都不影响片长。
+        "[dub][bg]amix=inputs=2:duration=first:normalize=0[a]"
+    )
+    tmp = out_path.with_name(f"{out_path.stem}.tmp.mp4")
+    try:
+        await run_ffmpeg([
+            "-i", str(video_path), "-i", str(original_path),
+            "-filter_complex", filter_complex,
+            "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart", str(tmp), "-y",
+        ])
+        tmp.replace(out_path)
+    finally:
+        tmp.unlink(missing_ok=True)  # 失败时清理半成品；成功时已被 replace 移走
     return out_path

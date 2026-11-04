@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "视译宝",
-  "version": "0.1.11",
-  "identifier": "com.shiyibao.desktop",
+  "productName": "华章",
+  "version": "2.3.0",
+  "identifier": "com.shiyibao.huazhang",
   "build": {
     "beforeDevCommand": "npm --prefix app run dev -- --host 127.0.0.1",
     "devUrl": "http://127.0.0.1:5173",
@@ -28,8 +28,8 @@
       "binaries/shiyibao-backend"
     ],
     "category": "Video",
-    "shortDescription": "本地视频转译与配音工具",
-    "longDescription": "视译宝是一款本地运行的视频转译、字幕翻译、语音合成与混流工具。",
+    "shortDescription": "中国文化跨语言传播工作台",
+    "longDescription": "华章基于视译宝，提供视频翻译、多语言字幕、语音合成与成片导出，辅助文化内容的跨语言传播。",
     "macOS": {
       "minimumSystemVersion": "10.15"
     },

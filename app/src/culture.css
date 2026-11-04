@@ -1,0 +1,72 @@
+:root {
+  /* 声帆 SailVoice：海蓝 + 中国红 */
+  --hz-paper: #f5f8fb;
+  --hz-panel: #ffffff;
+  --hz-ink: #10263d;
+  --hz-green: #0b4f8a;
+  --hz-muted: #5f7186;
+  --hz-rule: #dbe4ee;
+  --hz-soft: #eaf1f8;
+  --hz-red: #c8102e;
+  --hz-serif: 'Songti SC', 'STSong', 'Noto Serif SC', 'SimSun', serif;
+}
+.dark {
+  --hz-paper: #0b1622;
+  --hz-panel: #112131;
+  --hz-ink: #e3ecf5;
+  --hz-green: #7fb6e6;
+  --hz-muted: #9aaabb;
+  --hz-rule: #24384d;
+  --hz-soft: #182c40;
+  --hz-red: #ff6b7f;
+}
+.culture-shell {
+  background: var(--hz-paper);
+  --color-background: var(--hz-paper);
+  --color-card: var(--hz-panel);
+  --color-foreground: var(--hz-ink);
+  --color-primary: var(--hz-green);
+  --color-primary-foreground: #fffefa;
+  --color-ring: var(--hz-green);
+  --color-border: var(--hz-rule);
+}
+.culture-nav.glass-panel {
+  background: color-mix(in srgb, var(--hz-paper), transparent 6%);
+  border: 0;
+  border-bottom: 1px solid var(--hz-rule);
+  box-shadow: none;
+  color: var(--hz-ink);
+}
+.culture-brand { display: flex; align-items: center; gap: 12px; flex-shrink: 0; cursor: pointer; }
+.culture-brand-mark {
+  width: 36px; height: 39px; border-radius: 3px 1px 3px 1px;
+  display: grid; place-items: center; color: #fff; background: #c8102e;
+  border: 3px double #f08a99; font: 25px/1 var(--hz-serif);
+}
+.culture-brand-name { font: 600 24px/1.2 var(--hz-serif); letter-spacing: .17em; text-align: left; color: var(--hz-ink); white-space: nowrap; }
+.culture-brand-name small { display: block; font: 8px/1.5 -apple-system, sans-serif; letter-spacing: .16em; margin-top: 3px; }
+.culture-brand:focus-visible { outline: 2px solid var(--hz-red); outline-offset: 5px; }
+.culture-nav-version button { color: var(--hz-green); background: var(--hz-soft); border-color: var(--hz-rule); }
+.culture-nav-version svg { color: var(--hz-green); }
+.culture-studio { padding-top: 42px; padding-bottom: 42px; }
+.culture-studio-heading h1 { font-family: var(--hz-serif); font-weight: 500; color: var(--hz-ink); letter-spacing: .04em; line-height: 1.5; }
+.culture-studio-heading p { color: var(--hz-muted); line-height: 1.9; }
+.culture-studio-heading > div:first-child { background: var(--hz-soft); color: var(--hz-green); border-color: var(--hz-rule); border-radius: 4px; }
+.culture-studio-heading > div:first-child svg { color: var(--hz-red); }
+.culture-upload-zone { background: var(--hz-panel); border: 1px dashed var(--hz-green); border-radius: 12px; box-shadow: none; }
+.culture-upload-zone:hover { background: var(--hz-soft); border-color: var(--hz-green); box-shadow: 0 12px 32px #0b4f8a12; }
+.culture-upload-zone svg, .culture-upload-zone .text-purple-600, .culture-upload-zone .text-blue-600 { color: var(--hz-green); }
+.culture-activity { background: var(--hz-soft); border-color: var(--hz-rule); border-radius: 12px; box-shadow: none; }
+.culture-url-form { background: var(--hz-panel); border-color: var(--hz-rule); border-radius: 8px; }
+.culture-url-submit { background: #0b4f8a; border-radius: 5px; }
+.culture-url-submit:hover { background: #083c6a; }
+.culture-studio input[type='range'] { accent-color: var(--hz-green); }
+@media (max-width: 600px) {
+  .culture-nav .culture-nav-version, .culture-nav .culture-system-health { display: none; }
+  .culture-brand-mark { height: 33px; width: 31px; font-size: 22px; }
+  .culture-brand-name { font-size: 21px; }
+  .culture-brand { gap: 8px; }
+  .culture-brand-name small { font-size: 6px; }
+  .culture-studio { padding-top: 25px; padding-bottom: 25px; }
+  .culture-studio-heading h1 { font-size: 30px; }
+}

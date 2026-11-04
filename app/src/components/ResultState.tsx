@@ -1,12 +1,43 @@
-import { useEffect, useState, useRef, useMemo, memo } from 'react'
+import { useEffect, useState, useRef, useMemo, memo, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
-  Download, ChevronDown, Check,
-  Play, Pause, Volume2, VolumeX, Captions, Maximize, Video, Type, AudioWaveform,
-  Music, RotateCcw, Copy, Sparkles, Film, ZoomIn, ZoomOut,
-  Search, FileText, Send, BookOpen, RefreshCw,
-  Languages, Compass, Clock, Bot, Wand2, CheckCircle2, Lightbulb, BookMarked, HelpCircle, FileDown, ListFilter, Activity,
-  Trash2
+  Download,
+  ChevronDown,
+  Check,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Captions,
+  Maximize,
+  Video,
+  Type,
+  AudioWaveform,
+  Music,
+  RotateCcw,
+  Copy,
+  Film,
+  ZoomIn,
+  ZoomOut,
+  Search,
+  FileText,
+  Send,
+  BookOpen,
+  RefreshCw,
+  Languages,
+  Compass,
+  Clock,
+  CheckCircle2,
+  Lightbulb,
+  BookMarked,
+  HelpCircle,
+  FileDown,
+  ListFilter,
+  Activity,
+  Trash2,
+  MessageSquareText,
+  MessagesSquare,
+  ScrollText,
 } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { Button } from '@/components/ui/button'
@@ -20,8 +51,10 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { exportSubtitles, type SubtitleExportContent, type SubtitleExportFormat, getSubtitles, getAudioUrl, getExportUrl, getVideoUrl, getTaskStatus, analyzeSubtitlesAI, type SubtitleSegment, type TaskStatus } from '@/lib/api'
+import { exportSubtitles, type SubtitleExportContent, type SubtitleExportFormat, getSubtitles, getAudioUrl, getExportUrl, getVideoUrl, getOriginalTrackUrl, getTaskStatus, analyzeSubtitlesAI, type SubtitleSegment, type TaskStatus } from '@/lib/api'
 import { loadSettings } from './SettingsPanel'
+import { flushOriginalVolume, useOriginalTrack, useOriginalVolume } from '@/lib/original-track'
+import OriginalVolumeControl from './OriginalVolumeControl'
 
 interface ResultStateProps {
   taskId: string
@@ -603,6 +636,16 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
   const videoUrl = getVideoUrl(taskId)
   const exportUrl = getExportUrl(taskId)
 
+  // 成片只含配音时，原声单独播放并可实时调音量；导出按该音量混音。
+  const hasOriginalTrack = Boolean(taskStatus?.separate_original && taskStatus?.original_track)
+  const [originalVolume, setOriginalVolume] = useOriginalVolume(taskId, taskStatus?.original_audio_volume)
+  const getMaster = useCallback(() => {
+    const el = videoRef.current
+    if (!el) return null
+    return { time: el.currentTime, playing: !el.paused && !el.ended, rate: el.playbackRate, volume: el.muted ? 0 : el.volume }
+  }, [])
+  useOriginalTrack(hasOriginalTrack ? getOriginalTrackUrl(taskId) : null, getMaster, originalVolume)
+
   // 获取任务状态与字幕
   useEffect(() => {
     getTaskStatus(taskId).then(setTaskStatus).catch(() => {})
@@ -919,10 +962,13 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                         onClick={() => {
                           setSelectedQualityId(opt.id)
                           const exportFilename = getExportFilename(taskStatus?.filename, taskStatus?.target_lang)
-                          const a = document.createElement('a')
-                          a.href = exportUrl
-                          a.download = exportFilename
-                          a.click()
+                          // 先把防抖中的原声音量写到后端，导出才会按滑块当前值混音。
+                          void flushOriginalVolume(taskId).then(() => {
+                            const a = document.createElement('a')
+                            a.href = exportUrl
+                            a.download = exportFilename
+                            a.click()
+                          })
                         }}
                         className={`flex justify-between items-center rounded-lg text-xs cursor-pointer px-3 py-2 ${
                           isSelected
@@ -1006,7 +1052,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                 }
                 className={`absolute left-1/2 -translate-x-1/2 px-6 py-2.5 rounded-2xl bg-black/75 backdrop-blur-md border border-white/15 shadow-2xl text-center max-w-[92%] w-max z-30 cursor-grab active:cursor-grabbing select-none ${
                   isDraggingSub
-                    ? 'transition-none scale-[1.01] shadow-[0_0_24px_rgba(168,85,247,0.5)] border-purple-400/80'
+                    ? 'transition-none scale-[1.01] shadow-[0_0_24px_rgba(31,104,168,0.5)] border-purple-400/80'
                     : 'transition-[bottom,opacity,transform] duration-200 hover:border-purple-400/40'
                 } ${showControls ? 'bottom-20' : 'bottom-10'}`}
                 title={subtitlePos ? '拖动自定义字幕位置（双击重置为自适应）' : '默认自适应位置（按住可拖动自定义）'}
@@ -1068,7 +1114,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                       lastVideoUpdate.current = now
                     }
                   }}
-                  className="w-full cursor-pointer relative flex items-center [&_[data-slot=slider-track]]:!h-1.5 [&_[data-slot=slider-track]]:!w-full [&_[data-slot=slider-track]]:bg-white/20 [&_[data-slot=slider-thumb]]:!w-3.5 [&_[data-slot=slider-thumb]]:!h-3.5 [&_[data-slot=slider-thumb]]:!border-none [&_[data-slot=slider-thumb]]:!bg-purple-500 [&_[data-slot=slider-thumb]]:shadow-[0_0_10px_rgba(168,85,247,0.8)]"
+                  className="w-full cursor-pointer relative flex items-center [&_[data-slot=slider-track]]:!h-1.5 [&_[data-slot=slider-track]]:!w-full [&_[data-slot=slider-track]]:bg-white/20 [&_[data-slot=slider-thumb]]:!w-3.5 [&_[data-slot=slider-thumb]]:!h-3.5 [&_[data-slot=slider-thumb]]:!border-none [&_[data-slot=slider-thumb]]:!bg-purple-500 [&_[data-slot=slider-thumb]]:shadow-[0_0_10px_rgba(31,104,168,0.8)]"
                 />
               </div>
 
@@ -1091,6 +1137,12 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                     />
                   </div>
                 </div>
+
+                {hasOriginalTrack && (
+                  <div className="hidden md:flex">
+                    <OriginalVolumeControl variant="dark" value={originalVolume} onChange={setOriginalVolume} />
+                  </div>
+                )}
 
                 <button
                   onClick={() => setShowSubtitles((prev) => !prev)}
@@ -1357,7 +1409,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
-                  <Wand2 className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                  <ScrollText className="w-3.5 h-3.5 text-amber-300" />
                   AI 分析总结
                 </button>
               </div>
@@ -1504,7 +1556,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                     }`}
                   >
                     <div className="flex items-center gap-1.5 text-xs font-semibold mb-0.5">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      <FileText className="w-3.5 h-3.5 text-amber-500" />
                       核心摘要
                     </div>
                     <p className="text-[10px] opacity-75 line-clamp-1">视频要点与高维总结</p>
@@ -1535,7 +1587,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                     }`}
                   >
                     <div className="flex items-center gap-1.5 text-xs font-semibold mb-0.5">
-                      <Bot className="w-3.5 h-3.5 text-purple-600" />
+                      <MessagesSquare className="w-3.5 h-3.5 text-purple-600" />
                       字幕问答
                     </div>
                     <p className="text-[10px] opacity-75 line-clamp-1">交互式 AI 提问对话</p>
@@ -1547,7 +1599,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                   <div className="flex-1 flex flex-col min-h-0 bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-4 overflow-hidden relative">
                     <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700/80 pb-2.5 mb-3 shrink-0">
                       <span className="text-xs font-bold text-purple-800 dark:text-purple-300 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <FileText className="w-3.5 h-3.5 text-amber-500" />
                         {aiMode === 'summary' ? '视频核心摘要报告' : '结构化学习大纲'}
                       </span>
                       <div className="flex items-center gap-2">
@@ -1585,7 +1637,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                         <MarkdownRenderer content={aiAnalysisResult} />
                       ) : (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs py-10 space-y-2 text-center">
-                          <Sparkles className="w-8 h-8 stroke-1 text-purple-500 animate-bounce" />
+                          <FileText className="w-8 h-8 stroke-1 text-purple-500" />
                           <p className="text-slate-600 dark:text-slate-300 font-medium">点击上方按钮，交由 AI 一键提炼视频摘要与学习大纲</p>
                         </div>
                       )}
@@ -1599,7 +1651,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                     {/* 对话栏顶栏 Header */}
                     <div className="bg-white dark:bg-slate-800/90 border-b border-slate-200 dark:border-slate-700 px-3.5 py-2.5 flex items-center justify-between shrink-0 shadow-2xs">
                       <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                        <Bot className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                        <MessagesSquare className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                         AI 智能对话助教
                       </span>
                       <button
@@ -1630,7 +1682,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                             /* AI 助气体 (左侧) */
                             <div className="flex items-start gap-2.5 max-w-[95%]">
                               <div className="w-7 h-7 rounded-xl bg-purple-100 dark:bg-purple-900/60 border border-purple-200 dark:border-purple-700 flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
-                                <Bot className="w-4 h-4 text-purple-600 dark:text-purple-300" />
+                                <MessageSquareText className="w-4 h-4 text-purple-600 dark:text-purple-300" />
                               </div>
                               <div className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80 rounded-2xl rounded-tl-xs p-3.5 shadow-2xs space-y-2">
                                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700/60 pb-1.5 mb-1">
@@ -1661,7 +1713,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                       {isSendingChat && (
                         <div className="flex items-start gap-2.5">
                           <div className="w-7 h-7 rounded-xl bg-purple-100 dark:bg-purple-900/60 border border-purple-200 dark:border-purple-700 flex items-center justify-center shrink-0 animate-pulse">
-                            <Bot className="w-4 h-4 text-purple-600 dark:text-purple-300" />
+                            <MessageSquareText className="w-4 h-4 text-purple-600 dark:text-purple-300" />
                           </div>
                           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tl-xs p-3 shadow-2xs flex items-center gap-2 text-xs text-purple-600 dark:text-purple-300 font-medium">
                             <RefreshCw className="w-3.5 h-3.5 animate-spin" />

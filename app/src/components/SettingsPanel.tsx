@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings, Eye, EyeOff, Sliders, KeyRound, Mic, Zap, CheckCircle2, AlertCircle, Loader2, ExternalLink, RefreshCcw, Languages, Shield, ShieldCheck, Volume2, VolumeX } from 'lucide-react'
-import { GithubIcon } from './GithubIcon'
+import { Settings, Eye, EyeOff, Sliders, KeyRound, Mic, CheckCircle2, AlertCircle, Loader2, ExternalLink, RefreshCcw, Languages, Shield, ShieldCheck, Volume2, VolumeX, FastForward, MonitorPlay, Plug, SlidersHorizontal } from 'lucide-react'
 import { ChangelogModal } from './ChangelogModal'
 import { EnvironmentCheckModal } from './EnvironmentCheckModal'
 import {
@@ -38,7 +37,7 @@ export interface AppSettings {
   sourceLang: string
   targetLang: string
   streamMode?: 'streaming' | 'batch'
-  durationMode?: 'speed_audio' | 'slow_video'
+  durationMode?: 'speed_audio' | 'slow_video' | 'adaptive'
   originalAudioVolume?: number
   customGeminiModels?: { id: string; name: string }[]
 }
@@ -260,7 +259,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sourceLang: 'auto',
   targetLang: 'zh',
   streamMode: 'streaming',
-  durationMode: 'speed_audio',
+  durationMode: 'adaptive',
   originalAudioVolume: 0.2,
   customGeminiModels: [],
 }
@@ -470,8 +469,8 @@ export default function SettingsPanel() {
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger render={
-        <Button variant="ghost" size="icon" className="rounded-xl border-0 bg-slate-100/80 dark:bg-slate-800/80 hover:bg-slate-200/80 dark:hover:bg-slate-700/80 transition-all duration-200">
-          <Settings className="w-4 h-4 text-slate-600 dark:text-slate-300 stroke-[1.5]" />
+        <Button variant="ghost" size="icon" className="nav-icon-btn" title="偏好设置">
+          <Settings className="w-4 h-4" />
         </Button>
       } />
 
@@ -534,7 +533,7 @@ export default function SettingsPanel() {
                   <div className="space-y-1.5 bg-white/60 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                        <Zap className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                        <SlidersHorizontal className="w-3 h-3 text-purple-600 dark:text-purple-400" />
                         主流模型一键预设:
                       </span>
                       <span className="text-[10px] text-slate-400 dark:text-slate-500">
@@ -710,7 +709,7 @@ export default function SettingsPanel() {
                           </>
                         ) : (
                           <>
-                            <Zap className="w-3 h-3 mr-1 text-slate-500 stroke-[1.5]" />
+                            <Plug className="w-3 h-3 mr-1 text-slate-500 stroke-[1.5]" />
                             测试 Key
                           </>
                         )}
@@ -800,7 +799,7 @@ export default function SettingsPanel() {
                           </>
                         ) : (
                           <>
-                            <Zap className="w-3 h-3 mr-1 text-slate-500 stroke-[1.5]" />
+                            <Plug className="w-3 h-3 mr-1 text-slate-500 stroke-[1.5]" />
                             测试 Key
                           </>
                         )}
@@ -937,14 +936,21 @@ export default function SettingsPanel() {
 
             <div className="space-y-2 pt-2">
               <Label htmlFor="duration-mode">配音时长适配</Label>
-              <Select value={settings.durationMode || 'speed_audio'} onValueChange={(value) => setSettings(s => ({ ...s, durationMode: value === 'slow_video' ? 'slow_video' : 'speed_audio' }))}>
+              <Select value={settings.durationMode || 'adaptive'} onValueChange={(value) => setSettings(s => ({ ...s, durationMode: value === 'slow_video' || value === 'speed_audio' ? value : 'adaptive' }))}>
                 <SelectTrigger id="duration-mode" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="speed_audio">加速配音，保持原片时长（默认）</SelectItem>
-                  <SelectItem value="slow_video">视频适配配音时长，放慢画面</SelectItem>
+                  <SelectItem value="adaptive">画面跟随配音，双向变速（默认）</SelectItem>
+                  <SelectItem value="slow_video">配音原速，只放慢画面</SelectItem>
+                  <SelectItem value="speed_audio">加速配音，保持原片时长</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-slate-500">放慢画面会保留配音原速，仅延长配音较长的语句画面，并同步调整字幕和原声；使用整片合成，完成后播放。</p>
+              <p className="text-xs text-slate-500">
+                {(settings.durationMode || 'adaptive') === 'adaptive'
+                  ? '以译文配音时长为准：配音长则放慢画面（最慢 0.6 倍），配音短则加快画面（最快 1.25 倍）；配音最多轻微提速 1.25 倍，保证看得清、听得清。字幕与原声同步调整，使用整片合成。'
+                  : (settings.durationMode === 'slow_video'
+                    ? '配音保持原速，仅延长配音较长的语句画面，并同步调整字幕和原声；使用整片合成，完成后播放。'
+                    : '保持原片时长，配音过长时加速配音（语速过快可能听不清），支持边合成边播放。')}
+              </p>
             </div>
 
             {/* 行三：合成原声音量调节与静音 */}
@@ -1027,7 +1033,7 @@ export default function SettingsPanel() {
             {/* 行四：视频转译与播放体验模式 */}
             <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
               <div className="flex items-center gap-2">
-                <Zap className="w-3.5 h-3.5 text-purple-500 stroke-[1.5]" />
+                <MonitorPlay className="w-3.5 h-3.5 text-purple-500 stroke-[1.5]" />
                 <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                   视频转译与播放体验模式 (Playback Engine)
                 </h3>
@@ -1055,7 +1061,7 @@ export default function SettingsPanel() {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                        <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500/20 shrink-0" />
+                        <FastForward className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                         <span>极速流式秒开 (边缓存边看)</span>
                       </span>
                       <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
@@ -1106,17 +1112,6 @@ export default function SettingsPanel() {
         {/* 底部保存操作栏 */}
         <div className="pt-4 border-t border-slate-100 dark:border-slate-800/60 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <a
-              href="https://github.com/deijing/shiyibao"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-xs font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-            >
-              <GithubIcon className="w-4 h-4 text-slate-700 dark:text-slate-300" />
-              <span>GitHub 开源仓库</span>
-              <ExternalLink className="w-3.5 h-3.5 opacity-60" />
-            </a>
-            <span className="text-slate-300 dark:text-slate-700">|</span>
             <ChangelogModal />
           </div>
 

@@ -12,6 +12,7 @@ class TaskStage(StrEnum):
     TRANSLATING = "translating"
     SYNTHESIZING = "synthesizing"
     MIXING = "mixing"
+    AWAITING_REVIEW = "awaiting_review"
     COMPLETE = "complete"
     ERROR = "error"
 
@@ -26,10 +27,14 @@ class TaskStartRequest(BaseModel):
     source_lang: str = "auto"
     target_lang: str = "zh"
     stream_mode: str = "streaming"
-    duration_mode: Literal["speed_audio", "slow_video"] = "speed_audio"
+    duration_mode: Literal["speed_audio", "slow_video", "adaptive"] = "speed_audio"
     original_audio_volume: float = Field(default=0.2, ge=0.0, le=1.0)
     input_file_path: str | None = None
     output_dir: str | None = None
+    # Agent 人机协同：翻译完成后暂停，等待审核修订再继续配音合成。
+    pause_after: Literal["translate"] | None = None
+    # Agent 根据目标市场生成的额外翻译要求（受众、语气、保留术语等）。
+    translation_instructions: str = Field(default="", max_length=4000)
 
 
 class TaskStatusResponse(BaseModel):
@@ -43,8 +48,11 @@ class TaskStatusResponse(BaseModel):
     target_lang: str | None = None
     voice: str | None = None
     stream_mode: str | None = "streaming"
-    duration_mode: Literal["speed_audio", "slow_video"] = "speed_audio"
+    duration_mode: Literal["speed_audio", "slow_video", "adaptive"] = "speed_audio"
     original_audio_volume: float = 0.2
+    # 成片视频只含配音，原声为单独的 original_track.m4a（播放器可实时调音量）。
+    separate_original: bool = False
+    original_track: bool = False
     preview_ready: bool = False
     preview_url: str | None = None
     preview_duration: float = 0.0
@@ -55,6 +63,8 @@ class TaskStatusResponse(BaseModel):
     video_title: str | None = None
     project_folder_name: str | None = None
     project_dir: str | None = None
+    campaign_id: str | None = None
+    market: str | None = None
 
 
 

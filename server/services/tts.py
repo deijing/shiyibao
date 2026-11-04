@@ -343,9 +343,10 @@ _in_flight_events: dict[Path, asyncio.Event] = {}
 _in_flight_lock = asyncio.Lock()
 
 
-def _tts_cache_path(seg_dir: Path, seg_idx: int, voice: str, text: str) -> Path:
+def _tts_cache_path(seg_dir: Path, seg_idx: int, voice: str, text: str, context: str = "") -> Path:
     """按 音色+文案 内容寻址，避免重跑任务复用过期缓存。"""
-    digest = hashlib.sha256(f"{voice}\0{text}".encode()).hexdigest()[:16]
+    cache_key = f"{voice}\0{text}" + (f"\0{context}" if context else "")
+    digest = hashlib.sha256(cache_key.encode()).hexdigest()[:16]
     return seg_dir / f"{int(seg_idx):03d}_{digest}.wav"
 
 
@@ -363,7 +364,8 @@ async def _synthesize_single_utterance(
     if not text:
         return None
     seg_idx = seg.get("index", idx_0)
-    wav_path = _tts_cache_path(seg_dir, int(seg_idx), voice, text)
+    context = str(seg.get("tts_context") or "").strip()
+    wav_path = _tts_cache_path(seg_dir, int(seg_idx), voice, text, context)
 
     if wav_path.exists() and wav_path.stat().st_size > 100:
         return (float(seg["start"]), float(seg.get("end", seg["start"] + 3.0)), wav_path)
@@ -387,7 +389,7 @@ async def _synthesize_single_utterance(
     body = {
         "model": MIMO_MODEL,
         "messages": [
-            {"role": "user", "content": ""},
+            {"role": "user", "content": context},
             {"role": "assistant", "content": text},
         ],
         "audio": {"format": "wav", "voice": voice},

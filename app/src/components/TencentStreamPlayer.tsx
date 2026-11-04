@@ -1,9 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Play, Pause, Volume2, VolumeX, Maximize, Minimize,
-  Sparkles, Loader2, Gauge,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Maximize,
+  Minimize,
+  Loader2,
+  Gauge,
+  FastForward,
 } from 'lucide-react'
-import { apiUrl, type TaskStatus, type SubtitleSegment } from '@/lib/api'
+import { apiUrl, getOriginalTrackUrl, type TaskStatus, type SubtitleSegment } from '@/lib/api'
+import { useOriginalTrack, useOriginalVolume } from '@/lib/original-track'
+import OriginalVolumeControl from './OriginalVolumeControl'
 
 interface TencentStreamPlayerProps {
   taskId: string
@@ -97,6 +106,23 @@ export default function TencentStreamPlayer({ taskId, status, subtitles = [] }: 
   useEffect(() => { playingIndexRef.current = playingIndex }, [playingIndex])
 
   const chunkStart = (index: number) => chunkList[index]?.start ?? 0
+
+  // 分片只含配音；原声单独成轨，跟随当前活动分片播放，音量可实时调节。
+  const hasOriginalTrack = Boolean(status.separate_original && status.original_track)
+  const [originalVolume, setOriginalVolume] = useOriginalVolume(taskId, status.original_audio_volume)
+  const chunkListRef = useRef(chunkList)
+  useEffect(() => { chunkListRef.current = chunkList }, [chunkList])
+  const getMaster = useCallback(() => {
+    const el = videoRefs[activeSlotRef.current].current
+    if (!el || !el.src) return null
+    return {
+      time: (chunkListRef.current[playingIndexRef.current]?.start ?? 0) + el.currentTime,
+      playing: !el.paused && !el.ended,
+      rate: el.playbackRate,
+      volume: el.muted ? 0 : el.volume,
+    }
+  }, [videoRefs])
+  useOriginalTrack(hasOriginalTrack ? getOriginalTrackUrl(taskId) : null, getMaster, originalVolume)
 
   const setSlot = (slot: 0 | 1, idx: number) => {
     const next: [number, number] = [...slotChunkRef.current] as [number, number]
@@ -362,7 +388,7 @@ export default function TencentStreamPlayer({ taskId, status, subtitles = [] }: 
           <span className="text-slate-300 text-[11px] font-mono">{bannerText}</span>
         </div>
         <div className="flex items-center gap-1.5 bg-black/60 px-2.5 py-1 rounded-full border border-white/10 text-[11px]">
-          <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
+          <FastForward className="h-3.5 w-3.5 text-emerald-400" />
           <span>免等待秒开</span>
         </div>
       </div>
@@ -487,6 +513,12 @@ export default function TencentStreamPlayer({ taskId, status, subtitles = [] }: 
                 />
               </div>
             </div>
+
+            {hasOriginalTrack && (
+              <div className="ml-2 hidden sm:flex">
+                <OriginalVolumeControl variant="dark" value={originalVolume} onChange={setOriginalVolume} />
+              </div>
+            )}
 
             <div className="font-mono text-[13px] text-white/50 tracking-wide ml-2 flex items-center gap-1">
               <span className="text-white/95">{formatTime(currentAbs)}</span>

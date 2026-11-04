@@ -149,6 +149,36 @@ async def probe_duration(video_path: Path) -> float:
         return 0.0
 
 
+async def probe_video_meta(video_path: Path) -> dict[str, int | float | None]:
+    """探测视频时长与画面宽高；不可用或异常时安全降级。"""
+    ffprobe = find_media_binary("ffprobe")
+    if ffprobe is None or not video_path.is_file():
+        return {"duration": 0.0, "width": None, "height": None}
+    proc = await asyncio.create_subprocess_exec(
+        ffprobe,
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height:format=duration",
+        "-of", "json",
+        str(video_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await proc.communicate()
+    try:
+        import json
+        payload = json.loads(stdout.decode("utf-8", errors="replace") or "{}")
+        streams = payload.get("streams") or []
+        stream0 = streams[0] if streams else {}
+        fmt = payload.get("format") or {}
+        duration = float(fmt.get("duration") or 0.0)
+        width = int(stream0["width"]) if stream0.get("width") else None
+        height = int(stream0["height"]) if stream0.get("height") else None
+        return {"duration": round(max(0.0, duration), 2), "width": width, "height": height}
+    except (ValueError, TypeError, KeyError):
+        return {"duration": 0.0, "width": None, "height": None}
+
+
 _MIN_REUSABLE_MEDIA_BYTES = 1000
 _FTYP_HEADER_BYTES = 64
 

@@ -213,7 +213,7 @@ fn build_main_window<M: Manager<Wry>>(
         MAIN_WINDOW_LABEL,
         WebviewUrl::App("index.html".into()),
     )
-    .title("视译宝")
+    .title("华章 · 中国文化跨语言传播工作台")
     .inner_size(1280.0, 820.0)
     .min_inner_size(960.0, 640.0)
     .center()
@@ -354,7 +354,7 @@ fn spawn_backend_supervisor(
         // 必须明确告诉用户重启应用，否则界面就是一个永远转圈的死路。
         app.dialog()
             .message(format!(
-                "{last_error}\n\n请退出后重新打开视译宝；若反复出现，请检查是否有安全软件拦截了本机回环连接。"
+                "{last_error}\n\n请退出后重新打开华章；若反复出现，请检查是否有安全软件拦截了本机回环连接。"
             ))
             .kind(MessageDialogKind::Error)
             .title("后端服务启动失败")
@@ -413,7 +413,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("创建视译宝桌面应用失败");
+        .expect("创建华章桌面应用失败");
 
     app.run(|app_handle, event| match event {
         RunEvent::WindowEvent {

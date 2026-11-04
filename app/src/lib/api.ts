@@ -30,7 +30,7 @@ export function apiUrl(path: string): string {
  * Content-Type 只在 body 是 JSON 字符串时补齐——uploadVideo 传的是 FormData，
  * 手动设置会破坏 multipart 的 boundary。
  */
-function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers)
   if (typeof init?.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -58,7 +58,7 @@ export interface TaskStartConfig {
   source_lang?: string
   target_lang: string
   stream_mode?: 'streaming' | 'batch'
-  duration_mode?: 'speed_audio' | 'slow_video'
+  duration_mode?: 'speed_audio' | 'slow_video' | 'adaptive'
   original_audio_volume?: number
   input_file_path?: string
   output_dir?: string
@@ -73,8 +73,10 @@ export interface GeminiModelItem {
 
 export interface TaskStatus {
   task_id: string
-  stage: 'pending' | 'downloading' | 'extracting_audio' | 'transcribing' | 'translating' | 'synthesizing' | 'mixing' | 'complete' | 'error'
+  stage: 'pending' | 'downloading' | 'extracting_audio' | 'transcribing' | 'translating' | 'synthesizing' | 'mixing' | 'awaiting_review' | 'complete' | 'error'
   progress: number
+  campaign_id?: string | null
+  market?: string | null
   message: string
   error: string | null
   filename?: string
@@ -83,8 +85,11 @@ export interface TaskStatus {
   target_lang?: string
   voice?: string
   stream_mode?: 'streaming' | 'batch'
-  duration_mode?: 'speed_audio' | 'slow_video'
+  duration_mode?: 'speed_audio' | 'slow_video' | 'adaptive'
   original_audio_volume?: number
+  /** 成片视频只含配音，原声为单独音轨，播放器可实时调节原声音量 */
+  separate_original?: boolean
+  original_track?: boolean
   gemini_api_url?: string
   gemini_api_format?: string
   preview_ready?: boolean
@@ -292,6 +297,19 @@ export async function getSubtitles(taskId: string): Promise<SubtitleSegment[]> {
   return res.json()
 }
 
+export async function editSubtitles(
+  taskId: string,
+  edits: { index: number; translated_text: string }[],
+): Promise<SubtitleSegment[]> {
+  const res = await apiFetch(`/api/task/${taskId}/subtitles`, {
+    method: 'PUT',
+    body: JSON.stringify({ edits }),
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.detail || '保存字幕失败')
+  return data
+}
+
 export type SubtitleExportContent = 'translated' | 'source' | 'bilingual'
 export type SubtitleExportFormat = 'srt' | 'vtt' | 'txt' | 'json'
 
@@ -315,6 +333,20 @@ export function getExportUrl(taskId: string): string {
 
 export function getVideoUrl(taskId: string): string {
   return apiUrl(`/api/task/${taskId}/video`)
+}
+
+/** 与成片时间轴对齐的原声轨 */
+export function getOriginalTrackUrl(taskId: string): string {
+  return apiUrl(`/api/task/${taskId}/audio/original`)
+}
+
+/** 保存播放器里调好的原声音量；导出、打包都会按这个值混音 */
+export async function setOriginalVolume(taskId: string, volume: number): Promise<void> {
+  const res = await apiFetch(`/api/task/${taskId}/original-volume`, {
+    method: 'PUT',
+    body: JSON.stringify({ volume }),
+  })
+  if (!res.ok) throw new Error('保存原声音量失败')
 }
 
 export function getThumbnailUrl(taskId: string): string {

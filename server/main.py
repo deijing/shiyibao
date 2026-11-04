@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import APP_DATA_DIR, TASKS_DIR, UPLOADS_DIR, WORKSPACE_DIR
-from .routers import env, performance, settings, task, upload, voice
+from .routers import agent, env, performance, settings, task, upload, voice
 from .security import (
     CORS_ORIGIN_REGEX,
     LOCAL_TOKEN_HEADER,
@@ -24,7 +24,7 @@ from .web_ui import mount_web_ui
 
 logger = logging.getLogger(__name__)
 
-TERMINAL_STAGES = {"complete", "error"}
+TERMINAL_STAGES = {"complete", "error", "awaiting_review"}
 
 
 def _recover_stale_tasks() -> None:
@@ -100,6 +100,7 @@ app.include_router(voice.router, prefix="/api")
 app.include_router(performance.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 app.include_router(env.router, prefix="/api")
+app.include_router(agent.router, prefix="/api")
 
 
 @app.get("/api/health")

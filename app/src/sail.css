@@ -1,0 +1,465 @@
+/* 声帆 SailVoice · Agent 出海工作台样式（海蓝 #0B4F8A + 中国红 #C8102E） */
+:root {
+  --sail-blue: #0b4f8a;
+  --sail-blue-deep: #083c6a;
+  --sail-red: #c8102e;
+  --sail-rule: #dbe4ee;
+  --sail-soft: #eaf1f8;
+  --sail-panel: #ffffff;
+}
+/* 继承自视译宝的紫/靛/紫罗兰/亮蓝强调色统一映射为声帆海蓝色阶（600 = 品牌色 #0B4F8A）。
+   Tailwind 4 的 text-purple-600 等工具类都经由 --color-* 变量取色，这里一次覆盖即可让
+   批量出海、作品档案、结果页等旧页面与弹窗（含 Portal）全部跟随主题，无需逐个改类名。 */
+:root {
+  --sail-scale-50: #eef5fb;  --sail-scale-100: #dceaf6; --sail-scale-200: #bad5ee;
+  --sail-scale-300: #85b6e2; --sail-scale-400: #4f8fcb; --sail-scale-500: #1f68a8;
+  --sail-scale-600: #0b4f8a; --sail-scale-700: #083f70; --sail-scale-800: #08345c;
+  --sail-scale-900: #0a2b4b; --sail-scale-950: #06192c;
+
+  --color-purple-50: var(--sail-scale-50);   --color-violet-50: var(--sail-scale-50);   --color-indigo-50: var(--sail-scale-50); --color-blue-50: var(--sail-scale-50);
+  --color-purple-100: var(--sail-scale-100); --color-violet-100: var(--sail-scale-100); --color-indigo-100: var(--sail-scale-100); --color-blue-100: var(--sail-scale-100);
+  --color-purple-200: var(--sail-scale-200); --color-violet-200: var(--sail-scale-200); --color-indigo-200: var(--sail-scale-200); --color-blue-200: var(--sail-scale-200);
+  --color-purple-300: var(--sail-scale-300); --color-violet-300: var(--sail-scale-300); --color-indigo-300: var(--sail-scale-300); --color-blue-300: var(--sail-scale-300);
+  --color-purple-400: var(--sail-scale-400); --color-violet-400: var(--sail-scale-400); --color-indigo-400: var(--sail-scale-400); --color-blue-400: var(--sail-scale-400);
+  --color-purple-500: var(--sail-scale-500); --color-violet-500: var(--sail-scale-500); --color-indigo-500: var(--sail-scale-500); --color-blue-500: var(--sail-scale-500);
+  --color-purple-600: var(--sail-scale-600); --color-violet-600: var(--sail-scale-600); --color-indigo-600: var(--sail-scale-600); --color-blue-600: var(--sail-scale-600);
+  --color-purple-700: var(--sail-scale-700); --color-violet-700: var(--sail-scale-700); --color-indigo-700: var(--sail-scale-700); --color-blue-700: var(--sail-scale-700);
+  --color-purple-800: var(--sail-scale-800); --color-violet-800: var(--sail-scale-800); --color-indigo-800: var(--sail-scale-800); --color-blue-800: var(--sail-scale-800);
+  --color-purple-900: var(--sail-scale-900); --color-violet-900: var(--sail-scale-900); --color-indigo-900: var(--sail-scale-900); --color-blue-900: var(--sail-scale-900);
+  --color-purple-950: var(--sail-scale-950); --color-violet-950: var(--sail-scale-950); --color-indigo-950: var(--sail-scale-950); --color-blue-950: var(--sail-scale-950);
+}
+.dark {
+  --sail-blue: #7fb6e6;
+  --sail-blue-deep: #5a9bd4;
+  --sail-red: #ff6b7f;
+  --sail-rule: #24384d;
+  --sail-soft: #182c40;
+  --sail-panel: #112131;
+}
+
+/* 顶栏：纯图标按钮统一为同一种圆形样式，外链统一为中性胶囊 */
+.nav-icon-btn {
+  width: 36px; height: 36px; border-radius: 9999px; border: 0; cursor: pointer;
+  color: var(--hz-muted, #64748b); background: transparent;
+  transition: background .15s, color .15s;
+}
+.nav-icon-btn:hover { background: var(--sail-soft); color: var(--sail-blue); }
+.nav-link-pill {
+  height: 32px; align-items: center; gap: 6px; padding: 0 12px; border-radius: 9999px;
+  font-size: 12px; font-weight: 600; color: var(--hz-muted, #64748b);
+  border: 1px solid var(--sail-rule); background: transparent;
+  transition: border-color .15s, color .15s;
+}
+.nav-link-pill:hover { border-color: var(--sail-blue); color: var(--sail-blue); }
+
+.sail-home {
+  position: relative;
+  width: 100%;
+  isolation: isolate;
+  background:
+    radial-gradient(900px 460px at 50% -6%, color-mix(in srgb, var(--sail-blue), transparent 86%), transparent 72%),
+    radial-gradient(520px 320px at 78% 8%, color-mix(in srgb, var(--sail-red), transparent 94%), transparent 70%);
+}
+/* 首屏极淡点阵，向下渐隐，提供质感但不抢内容 */
+.sail-home::before {
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 640px; z-index: -1; pointer-events: none;
+  background-image: radial-gradient(color-mix(in srgb, var(--sail-blue), transparent 80%) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse 60% 70% at 50% 0%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse 60% 70% at 50% 0%, #000 20%, transparent 75%);
+  opacity: .55;
+}
+.sail-title-hero { font-size: clamp(34px, 5.2vw, 60px); line-height: 1.18; letter-spacing: .01em; }
+.sail-home header .sail-subtitle { max-width: 600px; font-size: 16px; line-height: 1.8; }
+
+/* 首页输入舱 */
+.sail-composer {
+  position: relative; text-align: left;
+  background: var(--sail-panel);
+  border: 1px solid color-mix(in srgb, var(--sail-rule), transparent 15%);
+  border-radius: 24px;
+  box-shadow: 0 1px 2px #0b16220d, 0 10px 30px -10px #0b4f8a29, 0 40px 80px -40px #0b4f8a38;
+  transition: border-color .2s, box-shadow .2s;
+}
+.sail-composer:focus-within {
+  border-color: color-mix(in srgb, var(--sail-blue), transparent 55%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sail-blue), transparent 91%), 0 10px 30px -10px #0b4f8a33, 0 40px 80px -40px #0b4f8a40;
+}
+.sail-composer.is-dragging { border-color: var(--sail-blue); }
+.sail-composer-drop {
+  position: absolute; inset: 6px; z-index: 5; border-radius: 19px; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  font-size: 14px; font-weight: 600; color: var(--sail-blue);
+  border: 1.5px dashed var(--sail-blue);
+  background: color-mix(in srgb, var(--sail-panel), transparent 6%);
+  backdrop-filter: blur(2px);
+}
+.sail-composer-input {
+  display: block; width: 100%; min-height: 104px; resize: none;
+  padding: 20px 22px 8px; border: 0; outline: none; background: transparent; color: inherit;
+  font-size: 16px; line-height: 1.7;
+}
+.sail-composer-input::placeholder { color: color-mix(in srgb, var(--hz-muted, #64748b), transparent 25%); }
+.sail-composer-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 10px 10px 12px;
+}
+.sail-tool {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 11px;
+  border-radius: 9999px; border: 0; background: transparent; cursor: pointer; white-space: nowrap;
+  font-size: 13px; font-weight: 500; color: var(--hz-muted, #64748b);
+  transition: background .15s, color .15s;
+}
+.sail-tool:hover:not(:disabled), .sail-tool[data-popup-open] { background: var(--sail-soft); color: var(--foreground, inherit); }
+.sail-tool.is-active { color: var(--sail-blue); background: color-mix(in srgb, var(--sail-blue), transparent 92%); font-weight: 600; }
+.sail-tool:disabled { opacity: .5; cursor: not-allowed; }
+.sail-tool-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--sail-rule); }
+.sail-send {
+  width: 40px; height: 40px; border-radius: 9999px; border: 0; cursor: pointer;
+  display: grid; place-items: center; color: #fff;
+  background: linear-gradient(145deg, #0d63ad, #0b4f8a);
+  box-shadow: 0 6px 16px -4px #0b4f8a80, inset 0 1px 0 #ffffff33;
+  transition: transform .15s, box-shadow .15s, background .15s;
+}
+.sail-send:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 20px -6px #0b4f8a99, inset 0 1px 0 #ffffff33; }
+.sail-send:disabled { cursor: not-allowed; background: var(--sail-soft); color: color-mix(in srgb, var(--hz-muted, #64748b), transparent 30%); box-shadow: none; }
+.dark .sail-send:not(:disabled) { color: #08131f; background: linear-gradient(145deg, #a3cdf0, #7fb6e6); }
+
+.sail-attach {
+  display: flex; align-items: center; gap: 12px;
+  margin: 12px 12px 0; padding: 8px 8px 8px 8px; border-radius: 16px;
+  background: color-mix(in srgb, var(--sail-soft), transparent 35%);
+}
+.sail-attach-media {
+  position: relative; width: 112px; aspect-ratio: 16 / 9; flex-shrink: 0; overflow: hidden;
+  border-radius: 10px; border: 0; padding: 0; cursor: pointer; background: #0b1e33;
+}
+.sail-attach-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sail-attach-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 26px; height: 26px; border-radius: 9999px; display: grid; place-items: center;
+  background: #ffffffe6; color: #0b4f8a; box-shadow: 0 2px 8px #0006;
+}
+.sail-attach-icon {
+  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center;
+  color: var(--sail-blue); background: var(--sail-panel);
+}
+.sail-attach-input {
+  flex: 1; min-width: 0; height: 36px; border: 0; outline: none; background: transparent; color: inherit;
+  font-size: 14px;
+}
+.sail-icon-btn {
+  width: 30px; height: 30px; border-radius: 9999px; flex-shrink: 0; border: 0; cursor: pointer;
+  display: grid; place-items: center; background: transparent; color: var(--hz-muted, #64748b);
+  transition: background .15s, color .15s;
+}
+.sail-icon-btn:hover:not(:disabled) { background: var(--sail-panel); color: var(--foreground, inherit); }
+.sail-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.sail-hint-line {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  margin-top: 14px; padding: 0 6px; font-size: 12.5px; color: var(--hz-muted, #64748b);
+}
+.sail-suggest {
+  padding: 3px 10px; border-radius: 9999px; border: 0; cursor: pointer; background: transparent; white-space: nowrap;
+  color: inherit; font-size: 12.5px; transition: background .15s, color .15s;
+}
+.sail-suggest:hover { background: color-mix(in srgb, var(--sail-blue), transparent 92%); color: var(--sail-blue); }
+
+/* 首页分区：统一的小标题 + 右侧文字链接 */
+.sail-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.sail-section-head h2 { font-size: 17px; font-weight: 700; letter-spacing: -.005em; }
+.sail-section-head p { font-size: 13px; color: var(--hz-muted, #64748b); margin-top: 4px; }
+.sail-text-link {
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; cursor: pointer;
+  border: 0; background: transparent; padding: 0;
+  font-size: 13px; font-weight: 600; color: var(--sail-blue);
+}
+.sail-text-link:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 4px; }
+.sail-text-link:disabled { opacity: .55; cursor: not-allowed; }
+.sail-text-link.is-done { color: #059669; }
+
+.sail-recent {
+  width: 100%; display: flex; align-items: center; gap: 12px; padding: 8px; cursor: pointer;
+  border-radius: 16px; border: 1px solid color-mix(in srgb, var(--sail-rule), transparent 30%);
+  background: color-mix(in srgb, var(--sail-panel), transparent 20%);
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.sail-recent:hover { background: var(--sail-panel); border-color: var(--sail-rule); box-shadow: 0 8px 24px -12px #0b4f8a40; }
+
+/* Agent 工作流：节点 + 连接线的时间线 */
+.sail-flow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 20px; }
+@media (min-width: 640px) { .sail-flow { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.sail-flow li { position: relative; }
+@media (min-width: 640px) {
+  .sail-flow li:not(:last-child)::after {
+    content: ''; position: absolute; top: 18px; left: 46px; right: -12px; height: 1px;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--sail-blue), transparent 60%), color-mix(in srgb, var(--sail-blue), transparent 88%));
+  }
+}
+.sail-flow-node {
+  width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center;
+  color: var(--sail-blue); background: var(--sail-panel);
+  border: 1px solid var(--sail-rule);
+  box-shadow: 0 4px 12px -6px #0b4f8a40;
+}
+
+.sail-eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 600; letter-spacing: .08em;
+  color: var(--sail-blue);
+}
+.sail-dot {
+  width: 8px; height: 8px; border-radius: 9999px; background: var(--sail-red);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sail-red), transparent 82%);
+}
+.sail-title {
+  font-family: var(--hz-serif);
+  font-size: clamp(30px, 4.6vw, 52px);
+  font-weight: 600; line-height: 1.25; letter-spacing: .02em;
+  isolation: isolate;
+}
+.sail-title span { color: var(--sail-blue); position: relative; white-space: nowrap; }
+.sail-title span::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: .06em; height: .18em;
+  background: color-mix(in srgb, var(--sail-red), transparent 70%); z-index: -1;
+}
+.sail-subtitle { color: var(--hz-muted); font-size: 15px; line-height: 1.9; max-width: 640px; }
+
+.sail-card {
+  background: var(--sail-panel);
+  border: 1px solid var(--sail-rule);
+  border-radius: 18px;
+  box-shadow: 0 1px 2px #10263d0a, 0 12px 32px #0b4f8a0d;
+}
+
+.sail-textarea, .sail-input {
+  border: 1px solid var(--sail-rule); border-radius: 12px;
+  background: var(--sail-panel); color: inherit;
+  padding: 8px 12px; outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.sail-textarea { width: 100%; min-height: 84px; resize: vertical; font-size: 14px; line-height: 1.65; padding: 10px 14px; }
+.sail-textarea:focus, .sail-input:focus {
+  border-color: var(--sail-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sail-blue), transparent 82%);
+}
+.sail-input.is-edited { border-color: var(--sail-red); background: color-mix(in srgb, var(--sail-red), transparent 95%); }
+
+.sail-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 9999px; font-size: 12px;
+  border: 1px solid var(--sail-rule); background: var(--sail-soft); color: inherit;
+}
+button.sail-chip { cursor: pointer; transition: border-color .15s, color .15s; }
+button.sail-chip:hover { border-color: var(--sail-blue); color: var(--sail-blue); }
+
+.sail-primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 18px; border-radius: 12px; cursor: pointer;
+  font-size: 14px; font-weight: 600; color: #fff;
+  background: linear-gradient(135deg, #0b4f8a, #0d63ad);
+  box-shadow: 0 6px 18px #0b4f8a33;
+  transition: transform .15s, box-shadow .15s, opacity .15s;
+}
+.sail-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 24px #0b4f8a40; }
+.sail-primary:disabled { opacity: .55; cursor: not-allowed; }
+
+.sail-ghost {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 9999px; cursor: pointer;
+  font-size: 12px; font-weight: 600;
+  border: 1px solid var(--sail-rule); color: var(--sail-blue); background: transparent;
+  transition: background .15s, border-color .15s;
+}
+.sail-ghost:hover:not(:disabled) { background: var(--sail-soft); border-color: var(--sail-blue); }
+.sail-ghost:disabled { opacity: .55; cursor: not-allowed; }
+.sail-ghost.is-active { background: var(--sail-blue); border-color: var(--sail-blue); color: #fff; }
+
+.sail-step {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; border-radius: 12px; background: var(--sail-soft);
+}
+.sail-step-no {
+  flex-shrink: 0; min-width: 26px; height: 26px; border-radius: 8px;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; color: #fff; background: var(--sail-blue);
+}
+
+.sail-market {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 12px; font-size: 13px;
+  border: 1px solid var(--sail-rule); background: var(--sail-panel);
+}
+.sail-market.is-active { border-color: var(--sail-blue); background: color-mix(in srgb, var(--sail-blue), transparent 93%); }
+
+.sail-tab {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 8px 14px; border-radius: 12px; font-size: 14px; font-weight: 600;
+  border: 1px solid var(--sail-rule); background: var(--sail-panel);
+  transition: border-color .15s;
+}
+.sail-tab:hover { border-color: var(--sail-blue); }
+.sail-tab.is-active { border-color: var(--sail-blue); box-shadow: inset 0 -3px 0 var(--sail-red); }
+.sail-tab-badge {
+  font-size: 11px; padding: 1px 8px; border-radius: 9999px;
+  background: var(--sail-soft); color: var(--sail-blue);
+}
+.sail-tab-badge.stage-awaiting_review { background: #f59e0b; color: #fff; }
+.sail-tab-badge.stage-complete { background: #10b981; color: #fff; }
+.sail-tab-badge.stage-error, .sail-tab-badge.stage-missing { background: var(--sail-red); color: #fff; }
+
+.sail-score {
+  font-size: 22px; font-weight: 800; color: var(--sail-blue); line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.sail-score small { font-size: 12px; font-weight: 500; color: var(--hz-muted); margin-left: 2px; }
+
+/* 视频感组件：样片秀场卡片、声波指示器、A/B 对照切换、源片预览与缩略图 */
+.sail-tabular { font-variant-numeric: tabular-nums; }
+
+.sail-sample-card {
+  display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 18px; border: 1px solid color-mix(in srgb, var(--sail-rule), transparent 30%);
+  background: var(--sail-panel);
+  box-shadow: 0 1px 2px #0b16220a, 0 12px 28px -14px #0b4f8a33;
+  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.sail-sample-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--sail-blue), transparent 35%);
+  box-shadow: 0 12px 32px #0b4f8a1c;
+}
+.sail-sample-card.is-selected {
+  border-color: var(--sail-blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sail-blue), transparent 72%), 0 12px 32px #0b4f8a22;
+}
+
+.sail-poster-stage {
+  position: relative; aspect-ratio: 16 / 9; width: 100%; overflow: hidden;
+  background: linear-gradient(135deg, #0b1e33, #13365c);
+}
+.sail-poster-stage img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+  transition: transform .35s cubic-bezier(.22, 1, .36, 1);
+}
+.sail-sample-card:hover .sail-poster-stage img { transform: scale(1.04); }
+.sail-poster-scrim {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(8, 18, 30, 0.5) 0%, rgba(8, 18, 30, 0.04) 34%, rgba(8, 18, 30, 0.08) 56%, rgba(8, 18, 30, 0.9) 100%);
+}
+
+.sail-glass-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 9999px;
+  font-size: 11px; font-weight: 600; color: #f8fafc;
+  background: rgba(11, 22, 34, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+
+@keyframes sail-wave-bounce {
+  0%, 100% { transform: scaleY(0.35); opacity: 0.7; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+.sail-wave {
+  display: inline-flex; align-items: center; gap: 2px; height: 12px;
+}
+.sail-wave span {
+  width: 2.5px; height: 100%; border-radius: 9999px;
+  background: currentColor; transform-origin: center;
+  animation: sail-wave-bounce 1.05s ease-in-out infinite;
+}
+.sail-wave span:nth-child(2) { animation-delay: .18s; }
+.sail-wave span:nth-child(3) { animation-delay: .36s; }
+.sail-wave span:nth-child(4) { animation-delay: .12s; }
+.sail-wave.is-paused span { animation-play-state: paused; transform: scaleY(0.45); opacity: 0.55; }
+
+.sail-ab-switch {
+  display: inline-flex; align-items: center; gap: 3px; padding: 3px;
+  border-radius: 9999px; border: 1px solid var(--sail-rule);
+  background: var(--sail-soft);
+}
+.sail-ab-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 9999px; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--hz-muted);
+  background: transparent; border: 0;
+  transition: background .15s, color .15s, box-shadow .15s;
+}
+.sail-ab-btn:hover { color: inherit; }
+.sail-ab-btn.is-active {
+  background: var(--sail-blue); color: #fff;
+  box-shadow: 0 2px 8px #0b4f8a36;
+}
+.dark .sail-ab-btn.is-active { color: #08131f; }
+
+.sail-meta-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 8px;
+  font-size: 11px; font-weight: 500;
+  background: var(--sail-soft); border: 1px solid var(--sail-rule);
+  font-variant-numeric: tabular-nums;
+}
+
+.sail-thumb-box {
+  position: relative; width: 92px; aspect-ratio: 16 / 9; flex-shrink: 0;
+  border-radius: 9px; overflow: hidden;
+  border: 1px solid var(--sail-rule);
+  background: linear-gradient(135deg, #0d2744 0%, #163d66 55%, #2b1d2e 100%);
+}
+.sail-thumb-box img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+
+/* 无画面时的「声纹海报」占位封面 */
+.sail-thumb-poster {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(120% 90% at var(--glow-x, 30%) var(--glow-y, 20%), #2f7fc4b3 0%, transparent 55%),
+    radial-gradient(80% 70% at var(--accent-x, 80%) 110%, #c8102e47 0%, transparent 60%),
+    linear-gradient(160deg, #0d3a66 0%, #0a2746 55%, #071a30 100%);
+}
+/* 细腻的斜向光泽与颗粒感 */
+.sail-thumb-poster::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(115deg, transparent 30%, #ffffff14 46%, transparent 62%),
+    radial-gradient(#ffffff10 0.5px, transparent 0.6px) 0 0 / 3px 3px;
+}
+.sail-thumb-poster::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 1px #ffffff14, inset 0 -18px 24px -12px #00000059;
+}
+.sail-thumb-wave {
+  position: absolute; left: 10%; right: 10%; top: 50%; height: 54%;
+  transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: space-between; gap: 1px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+}
+.sail-thumb-wave > span {
+  flex: 1; max-width: 2px; border-radius: 9999px;
+  background: linear-gradient(180deg, #cfe6ff, #7fb6e6);
+  opacity: .55;
+  transition: opacity .25s, transform .35s cubic-bezier(.2, .8, .2, 1);
+  transform-origin: center;
+}
+.sail-thumb-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 22px; height: 22px; border-radius: 9999px;
+  display: grid; place-items: center; color: #fff;
+  background: #ffffff26;
+  -webkit-backdrop-filter: blur(6px) saturate(140%);
+  backdrop-filter: blur(6px) saturate(140%);
+  box-shadow: inset 0 0 0 1px #ffffff40, 0 4px 12px -4px #00000080;
+  transition: transform .25s, background .25s;
+}
+.sail-thumb-format {
+  position: absolute; left: 5px; top: 4px;
+  font: 600 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em; color: #ffffffa6;
+}
+.group:hover .sail-thumb-wave > span { opacity: .85; transform: scaleY(1.12); }
+.group:hover .sail-thumb-play { transform: translate(-50%, -50%) scale(1.08); background: #ffffff38; }

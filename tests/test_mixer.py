@@ -100,6 +100,36 @@ def test_mix_filter_complex_original_volume() -> None:
     assert "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur=10.000,atrim=0:10.000,asetpts=PTS-STARTPTS[a]" == filter_muted
 
 
+def test_merge_muted_original_keeps_full_video_length(monkeypatch, tmp_path) -> None:
+    """回归：原声静音时只输出配音轨，配音短于视频也不能把成片截在最后一句处。"""
+    import subprocess
+
+    import pytest
+
+    from server.services.audio import find_media_binary, probe_duration
+
+    ffmpeg = find_media_binary("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg not available")
+    video = tmp_path / "input.mp4"
+    subprocess.run([
+        ffmpeg, "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10:duration=6",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=6",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "-y", str(video),
+    ], check=True)
+    subprocess.run([
+        ffmpeg, "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "sine=frequency=880:duration=2", "-y", str(tmp_path / "dubbed_audio.wav"),
+    ], check=True)
+    monkeypatch.setattr(mixer, "get_subtitle_burn_filter", lambda: None)
+
+    out = asyncio.run(mixer.merge(
+        tmp_path, video, [{"start": 0, "end": 2, "translated_text": "你好"}], original_volume=0.0,
+    ))
+    assert asyncio.run(probe_duration(out)) == pytest.approx(6.0, abs=0.3)
+
+
 def test_write_srt_subtitles(tmp_path) -> None:
     path = mixer.write_srt_subtitles(
         tmp_path,

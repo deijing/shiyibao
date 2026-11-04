@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -345,6 +346,7 @@ async def translate_subtitles(
     gemini_api_format: str = "Gemini",
     log_cb: Callable[..., None] | None = None,
     skip_translated: bool = False,
+    extra_instructions: str = "",
 ) -> list[dict]:
     """通过 AI 大模型 API 将每个分段的 source_text 翻译为 target_lang。
 
@@ -370,6 +372,11 @@ async def translate_subtitles(
         system_prompt = (
             "You are a professional subtitle translator. Translate the following "
             f"subtitle segments to {target_lang_name}. {json_shape}"
+        )
+    if extra_instructions.strip():
+        system_prompt += (
+            "\nLocalization brief (follow it, but never break the JSON format above):\n"
+            + extra_instructions.strip()
         )
 
     performance = get_performance_settings()
@@ -513,6 +520,65 @@ async def translate_subtitles(
     return segments
 
 
+_TITLE_KEYS = ("title", "video_title", "标题", "视频标题", "name")
+# 两端可以无条件剥掉的字符（JSON 括号、引号、Markdown 标记）
+_TITLE_WRAPPERS = "{}[]\"'“”‘’`*#"
+# 成对括号只在整体包住标题时才剥，避免误伤「【干货】Python 入门」「入门 (上)」这类正常标题
+_TITLE_PAIRS = {"(": ")", "（": "）", "【": "】", "「": "」", "『": "』", "《": "》", "<": ">", "〈": "〉"}
+
+
+def _unwrap_title_pair(text: str) -> str:
+    while len(text) >= 2 and _TITLE_PAIRS.get(text[0]) == text[-1] and text.count(text[0]) == 1:
+        text = text[1:-1].strip()
+    return text
+_TITLE_LABEL_RE = re.compile(r"^\s*[\"'“”]?(?:video_title|title|视频标题|标题)[\"'“”]?\s*[:：=]\s*", re.IGNORECASE)
+
+
+def clean_video_title(raw: str | None) -> str:
+    """把模型返回的标题规整成纯文本。
+
+    模型偶尔不按「只输出标题」的要求，而是返回 {"title": "..."}、```json 代码块、
+    「标题：xxx」或带书名号/引号的文本；之前只删引号和冒号，会留下「{ title xxx }」。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    # 去掉 Markdown 代码块围栏
+    fenced = re.fullmatch(r"```[a-zA-Z]*\s*(.*?)\s*```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    # JSON：{"title": "..."} / ["..."] / "..."
+    if text[:1] in "{[\"":
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            value = next((parsed[k] for k in _TITLE_KEYS if isinstance(parsed.get(k), str)), None)
+            if value is None:
+                value = next((v for v in parsed.values() if isinstance(v, str)), "")
+            text = value
+        elif isinstance(parsed, list):
+            text = next((v for v in parsed if isinstance(v, str)), "")
+        elif isinstance(parsed, str):
+            text = parsed
+    # 花括号/方括号包着的多行内容（如「{\n  title xxx\n}」）先压成一行，否则下面取首行只剩「{」
+    if text[:1] in "{[":
+        text = " ".join(text.split())
+    # 只取第一行有内容的文本（模型有时会在后面附解释）
+    text = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    # 非严格 JSON（如 {title: xxx}、{ title xxx }）：先剥外层括号再去掉字段名
+    braced = text.startswith("{")
+    text = text.strip(_TITLE_WRAPPERS + " \t")
+    text = _TITLE_LABEL_RE.sub("", text)
+    if braced:  # 「{ title xxx }」：只有在花括号里才把开头的 title 当字段名，避免误删英文标题「Title IX…」
+        text = re.sub(r"^(?:video_title|title)\s+", "", text, flags=re.IGNORECASE)
+    text = _unwrap_title_pair(text.strip(_TITLE_WRAPPERS + " \t"))
+    text = re.sub(r"[\"“”]", "", text)
+    text = text.rstrip("。.!！?？,，;；:：、 ")
+    return text.strip()[:30]
+
+
 async def summarize_video_title(
     segments: list[dict],
     gemini_api_key: str = "",
@@ -570,10 +636,9 @@ async def summarize_video_title(
             resp = await client.post(url, json=payload, headers=headers)
             if resp.is_success:
                 data = resp.json()
-                text = extract_text(data).strip()
-                text = text.replace('"', '').replace('"', '').replace('《', '').replace('》', '').replace(':', '').replace('：', '').strip()
-                if text and len(text) >= 2:
-                    return text[:30]
+                text = clean_video_title(extract_text(data))
+                if len(text) >= 2:
+                    return text
     except Exception as e:
         logger.warning("AI title generation failed, falling back to local extractor: %s", e)
 

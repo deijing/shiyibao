@@ -31,6 +31,30 @@ def test_timeline_clips_overlaps_and_never_shortens_audio(tmp_path):
         retiming.build_timeline(clips, [3, 1], 0)
 
 
+@pytest.mark.parametrize('source,dub,expected', [
+    (2.0, 2.1, 2.0),      # 只长 5%：配音轻微提速，画面原速
+    (2.0, 3.3, 3.0),      # 长 65%：配音提速 1.1 倍，画面放慢到 0.667 倍
+    (2.0, 4.0, 3.3333),   # 长 100%：画面到下限 0.6 倍，配音提速 1.2 倍
+    (2.0, 5.0, 4.0),      # 长 150%：配音封顶 1.25 倍，画面只能继续放慢
+    (2.0, 1.0, 1.6),      # 配音更短：画面加快封顶 1.25 倍，剩余静音
+    (2.0, 1.8, 1.8),      # 配音略短：画面加快到刚好放下配音
+])
+def test_adaptive_window_bounds(source, dub, expected):
+    target = retiming.adaptive_window_duration(source, dub)
+    assert target == pytest.approx(expected, abs=1e-3)
+    assert dub / target <= retiming.MAX_AUDIO_SPEEDUP + 1e-9
+    assert source / target <= retiming.MAX_VIDEO_SPEED + 1e-9
+
+
+def test_adaptive_timeline_speeds_up_and_slows_down(tmp_path):
+    clips = [(1.0, 2.0, tmp_path / 'long.wav'), (3.0, 5.0, tmp_path / 'short.wav')]
+    windows, dubbed = retiming.build_timeline(clips, [1.65, 1.0], 6.0, 'adaptive')
+    assert [(w.start, w.end) for w in windows] == [(0, 1), (1, 2), (2, 3), (3, 5), (5, 6)]
+    # 1 秒画面放慢到 1.5 秒（配音 1.65 秒提速 1.1 倍）；2 秒画面加快到 1.6 秒。
+    assert [round(w.duration, 4) for w in windows] == [1, 1.5, 1, 1.6, 1]
+    assert [(round(a, 4), round(b, 4)) for a, b, _ in dubbed] == [(1, 2.5), (3.5, 5.1)]
+
+
 def test_duration_mode_defaults_and_validation():
     assert TaskStartRequest(gemini_api_key='key').duration_mode == 'speed_audio'
     with pytest.raises(ValidationError):
@@ -72,6 +96,38 @@ def test_real_ffmpeg_retimes_video_audio_and_subtitles(monkeypatch, tmp_path, so
         remapped = json.loads((tmp_path / 'subtitles_retimed.json').read_text())
         assert [(s['start'], s['end']) for s in remapped] == [(1, 3), (4, 5)]
         assert '00:00:01,000 --> 00:00:03,000' in (tmp_path / 'subtitles_zh.srt').read_text()
+    try:
+        asyncio.run(run())
+    finally:
+        hwaccel.reset_hwaccel_state()
+
+
+def test_real_ffmpeg_adaptive_speeds_up_video_and_background(monkeypatch, tmp_path):
+    if not audio.find_media_binary('ffmpeg') or not audio.find_media_binary('ffprobe'):
+        pytest.skip('FFmpeg/FFprobe required')
+
+    async def software_backends():
+        return [hwaccel._software_backend()]
+    monkeypatch.setattr(hwaccel, 'available_backends', software_backends)
+    hwaccel.reset_hwaccel_state()
+    source = tmp_path / 'input.mp4'
+    dub1, dub2 = tmp_path / 'long.wav', tmp_path / 'short.wav'
+
+    async def run():
+        await audio.run_ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30:duration=6',
+                                '-f', 'lavfi', '-i', 'sine=frequency=220:duration=6',
+                                '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-t', '6', str(source), '-y'])
+        for path, duration in [(dub1, 1.65), (dub2, 1.0)]:
+            await audio.run_ffmpeg(['-f', 'lavfi', '-i', f'sine=frequency=440:duration={duration}',
+                                    '-c:a', 'pcm_s16le', str(path), '-y'])
+        segments = [{'index': 0, 'start': 1, 'end': 2, 'source_text': 'a', 'translated_text': 'a'},
+                    {'index': 1, 'start': 3, 'end': 5, 'source_text': 'b', 'translated_text': 'b'}]
+        await retiming.merge_to_dub_duration(tmp_path, source, segments, [(1, 2, dub1), (3, 5, dub2)], 0.2,
+                                             mode='adaptive')
+        # 1 + 1.5 + 1 + 1.6 + 1 = 6.1 秒
+        assert await audio.probe_duration(tmp_path / 'final.mp4') == pytest.approx(6.1, abs=0.08)
+        remapped = json.loads((tmp_path / 'subtitles_retimed.json').read_text())
+        assert [(round(s['start'], 3), round(s['end'], 3)) for s in remapped] == [(1, 2.5), (3.5, 5.1)]
     try:
         asyncio.run(run())
     finally:

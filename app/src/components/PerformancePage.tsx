@@ -102,7 +102,7 @@ const CONTROLS: Array<{
     min: 1,
     max: 16,
     icon: AudioLines,
-    color: 'text-fuchsia-600 bg-fuchsia-500/10 dark:text-fuchsia-400 dark:bg-fuchsia-500/15',
+    color: 'text-indigo-600 bg-indigo-500/10 dark:text-indigo-400 dark:bg-indigo-500/15',
     warningThreshold: 8,
     warning: '建议从 6 开始，稳定后再逐步提高到 8',
   },
@@ -371,7 +371,7 @@ function ParameterCard({
               disabled={disabled}
               onChange={(event) => onChange(Number(event.target.value))}
               style={{
-                background: `linear-gradient(to right, #8B5CF6 0%, #8B5CF6 ${percentage}%, var(--color-slate-200, #E2E8F0) ${percentage}%, var(--color-slate-200, #E2E8F0) 100%)`,
+                background: `linear-gradient(to right, #0B4F8A 0%, #0B4F8A ${percentage}%, var(--color-slate-200, #E2E8F0) ${percentage}%, var(--color-slate-200, #E2E8F0) 100%)`,
               }}
               className="range-slider cursor-pointer"
             />

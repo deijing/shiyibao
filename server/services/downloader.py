@@ -30,10 +30,18 @@ class DownloadResult:
     title: str | None
 
 
+# 分享文案里的链接：遇到空白或中文标点即结束。
+_SHARE_URL_RE = re.compile(r"https?://[^\s<>\"'，。！？；、【】（）《》「」]+", re.IGNORECASE)
+
+
 def normalize_video_url(url: str) -> str:
     candidate = (url or "").strip()
     if not candidate:
         raise VideoUrlError("请输入视频链接")
+    # B 站 / 抖音等“复制链接”带有标题文案，如 "【标题】 https://www.bilibili.com/video/BV…"
+    match = _SHARE_URL_RE.search(candidate)
+    if match and match.group(0) != candidate:
+        candidate = match.group(0).rstrip(".,;:!?)]}")
     parsed = urlparse(candidate)
     if parsed.scheme not in {"http", "https"}:
         raise VideoUrlError("仅支持 http/https 视频链接")
@@ -79,7 +87,8 @@ def _download_video_sync(
 
     ffmpeg = find_media_binary("ffmpeg")
     ydl_opts: dict = {
-        "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+        # 优先 H.264：B 站默认给 AV1/HEVC，macOS WKWebView（桌面版）在旧机型上无法播放 AV1。
+        "format": "bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
         "merge_output_format": "mp4",
         "outtmpl": str(dest_dir / "%(id)s.%(ext)s"),
         "restrictfilenames": True,

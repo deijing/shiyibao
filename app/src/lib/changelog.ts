@@ -12,14 +12,104 @@ export interface ChangelogItem {
   }
 }
 
-export const CURRENT_VERSION = 'v0.1.11'
+export const CURRENT_VERSION = 'v2.3.0'
 
 export const CHANGELOG_HISTORY: ChangelogItem[] = [
   {
-    version: 'v0.1.11',
+    version: 'v2.3.0',
+    date: '2026-11-03',
+    title: '出海工作台首页改版与全站海蓝主题统一',
+    tag: '比赛版',
+    isLatest: true,
+    highlights: [
+      '出海工作台改为以需求输入框为中心：上传视频、粘贴链接、选择样片与目标市场都在同一个输入框内完成，⌘ + Enter 直接生成',
+      '选中目标市场后即时展示主要平台、结算币种与合规要点；未选择时给出一键填入的需求示例',
+      '批量出海、作品档案、音色库、性能调度与单片精修统一为海蓝 #0B4F8A 主题色，深浅色模式与弹窗同步生效',
+    ],
+    details: {
+      features: [
+        '输入框支持整卡拖拽上传，已添加的视频以缩略图附件展示，可点击预览或移除',
+        '首页新增最近出海项目与「Agent 如何工作」五步流程说明',
+        '文化样片卡片重新排版，显示原作作者与出处，可一键载入体验',
+      ],
+      improvements: [
+        '紫色、靛蓝与亮蓝强调色在主题层统一映射为海蓝色阶，旧页面无需逐个改样式即可跟随品牌色',
+        '页脚与导航栏精简，导航栏新增官网入口',
+        '单片精修工作台版本标记改为跟随应用版本号',
+      ],
+    },
+  },
+  {
+    version: 'v2.2.0',
+    date: '2026-11-02',
+    title: '原声实时调节与 B 站分享文案解析',
+    highlights: [
+      '原视频声音可在播放器中实时调节，不再需要重新渲染；导出成片按当前原声音量混音',
+      '支持直接粘贴 B 站等平台的分享文案，自动提取其中的视频链接',
+    ],
+    details: {
+      features: [
+        '成片与原声分轨保存，播放器新增「原声」滑条，原声轨与画面自动对齐；单片、成片与出海方案页均可调节',
+      ],
+      improvements: [
+        '在线视频下载优先选择 H.264 编码，macOS 桌面版可直接预览',
+        '导出混音结果按音量缓存，音量不变时重复导出不再重新编码',
+      ],
+      fixes: [
+        '修复粘贴 B 站分享文案时被判定为无效链接',
+      ],
+    },
+  },
+  {
+    version: 'v2.1.0',
+    date: '2026-11-02',
+    title: '声帆 SailVoice 品牌与出海工作台智能体',
+    highlights: [
+      '产品更名为「声帆 SailVoice」，定位中国视频出海：一句话描述目标市场，智能体规划并批量产出多语种成片',
+      '内置已校对台词的文化样片，免上传即可完整体验出海流程',
+    ],
+    details: {
+      features: [
+        '出海工作台：按目标市场生成出海方案，确认后自动创建多语种任务，支持逐条审核与整包下载',
+        '目标市场内置主要平台、币种与合规规则，智能体据此生成平台文案与合规提示',
+      ],
+      improvements: [
+        '全站图标统一为 lucide 线性图标，配色采用海蓝与中国红',
+      ],
+      fixes: [
+        '修复出海项目列表中已完成的项目仍显示「执行中」',
+      ],
+    },
+  },
+  {
+    version: 'v2.0.0',
+    date: '2026-11-01',
+    title: '画面跟随配音变速、单语字幕导出与 macOS 诊断修复',
+    highlights: [
+      '新增画面跟随配音的双向变速模式（默认）：配音长则放慢画面，短则加速，配音最多加速 1.25 倍以保证听得清',
+      '字幕支持仅译文、仅原文和双语导出',
+      '修复 macOS FFmpeg 路径查找与 Gemini 中转站诊断',
+    ],
+    details: {
+      features: [
+        '配音时长策略新增「画面跟随配音」：每句画面变速限制在 0.6–1.25 倍，配音超出部分再小幅加速，原声与字幕同步变速',
+        '原有「只放慢画面」模式保留；变速模式下也可编辑字幕后重新合成',
+        'SRT、VTT、TXT、JSON 与复制统一使用字幕导出接口，保留变速后的字幕时间轴',
+      ],
+      improvements: [
+        'FFmpeg 诊断同时验证 FFprobe，延长探测超时并区分执行失败与缺少字幕滤镜',
+        'Gemini 诊断与翻译共用请求构造，按当前地址、协议、模型和鉴权发送简短生成请求',
+      ],
+      fixes: [
+        '补全 macOS Apple Silicon、Intel Homebrew 和未链接 ffmpeg-full 的媒体工具查找路径',
+        '修复仅提供生成接口、不支持模型列表的 Gemini 中转站被误报不可用的问题',
+      ],
+    },
+  },
+  {
+    version: 'v1.11.0',
     date: '2026-08-15',
     title: '稳定性加固、断点校验与本地安全防护',
-    isLatest: true,
     highlights: [
       '流式断点只复用可探测的完整 MP4，损坏碎片不再把后续拼接打崩',
       '批量翻译按字幕 ID 对齐，漏译不再造成全片错位；无效 API Key 立即失败',
@@ -44,7 +134,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.10',
+    version: 'v1.10.0',
     date: '2026-08-15',
     title: '修复成片配音把同一句话念两遍',
     highlights: [
@@ -60,7 +150,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.9',
+    version: 'v1.9.0',
     date: '2026-08-15',
     title: '粘贴视频链接一键翻译',
     highlights: [
@@ -75,7 +165,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.8',
+    version: 'v1.8.0',
     date: '2026-08-09',
     title: '稳定性修复、轮询热点治理与长视频 TTS 混音性能优化',
     highlights: [
@@ -102,7 +192,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.7',
+    version: 'v1.7.0',
     date: '2026-08-09',
     title: '独立白底双卡片工作台、全量字幕 AI 对话问答与 60fps 性能引擎',
     highlights: [
@@ -133,7 +223,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.6',
+    version: 'v1.6.0',
     date: '2026-08-08',
     title: '全流程无缝断点续传、AIMD 动态控速与标语工程目录升级',
     highlights: [
@@ -153,7 +243,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
       improvements: [
         '控制台 Header Icon 替换为静态高级 Wand2 徽章，移除旋转动画，提升 UI 优雅度与高级感',
         '应用数据根目录平滑迁移为纯英文 yishibao 规范名称（~/Library/Application Support/yishibao），确保老用户数据无缝继承',
-        'GitHub CI/CD 工作流新增 setup-ffmpeg 环境准备步骤，提升云端自动化测试成功率',
+        'CI/CD 工作流新增 setup-ffmpeg 环境准备步骤，提升云端自动化测试成功率',
       ],
       fixes: [
         '修复部分 API 厂商遭遇 429 时无渐进式退避导致任务直接失败的问题',
@@ -162,7 +252,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.5',
+    version: 'v1.5.0',
     date: '2026-07-29',
     title: '本地接口访问控制加固与失败可见性修复',
     highlights: [
@@ -190,7 +280,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.4',
+    version: 'v1.4.0',
     date: '2026-07-28',
     title: '内存架构深度优化与流媒体资源回收升级',
     highlights: [
@@ -215,7 +305,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.3',
+    version: 'v1.3.0',
     date: '2026-07-25',
     title: '流式渲染稳定性与本地安全加固',
     highlights: [
@@ -243,17 +333,15 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.2',
+    version: 'v1.2.0',
     date: '2026-07-25',
-    title: '性能调度硬件感知与开源仓库整合',
+    title: '性能调度硬件感知与版本日志',
     highlights: [
-      '新增 GitHub 开源仓库导航与全站页面入口 (deijing/shiyibao)',
       '性能调度中心新增 Windows / macOS / Linux 跨平台硬件感知与动态算力自动分配算法',
       '全新设计系统版本号显示与交互式更新历史日志弹窗',
     ],
     details: {
       features: [
-        '顶部导航栏、系统设置弹窗与 Footer 底部全站植入 GitHub 开源仓库地址',
         '增加全系统版本号 Badge 标记与变更日志（Changelog）弹窗页面',
       ],
       improvements: [
@@ -266,7 +354,7 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.1',
+    version: 'v1.1.0',
     date: '2026-07-24',
     title: '播放体验引擎与任务通知升级',
     highlights: [
@@ -286,9 +374,9 @@ export const CHANGELOG_HISTORY: ChangelogItem[] = [
     },
   },
   {
-    version: 'v0.1.0',
+    version: 'v1.0.0',
     date: '2026-07-20',
-    title: '视译宝首个桌面与Web双端开源测试版',
+    title: '首个桌面与 Web 双端测试版',
     highlights: [
       '整合音频提取、BcutASR 语音识别与 Gemini 智能多语言字幕翻译',
       '整合小米 MiMo 高品质多音色语音合成',
