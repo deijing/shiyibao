@@ -3,11 +3,12 @@ import {
   Clock, FileVideo, CheckCircle2, XCircle, Loader2,
   ArrowRight, Inbox, RefreshCw, RotateCcw, Trash2,
   HelpCircle, Languages, Mic, Filter, KeyRound,
-  AlertCircle, Terminal, Play, ListChecks, Check, Film
+  AlertCircle, Terminal, Play, ListChecks, Check, Film, ShieldAlert
 } from 'lucide-react'
 import { getTaskList, deleteTask, startTask, getThumbnailUrl, type TaskListItem } from '@/lib/api'
 import { loadSettings, saveSettings } from './SettingsPanel'
 import TaskDetailDrawer from './TaskDetailDrawer'
+import { SecurityStatusBadge } from './SecurityGuard'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -57,6 +58,7 @@ const LANG_LABELS: Record<string, string> = {
 const STAGE_CONFIG: Record<string, { label: string; color: string; bg: string; border: string; icon: typeof CheckCircle2 }> = {
   complete: { label: '已完成', color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-950/40', border: 'border-emerald-200 dark:border-emerald-900/60', icon: CheckCircle2 },
   error:    { label: '翻译失败', color: 'text-rose-600 dark:text-rose-400', bg: 'bg-rose-50 dark:bg-rose-950/40', border: 'border-rose-200 dark:border-rose-900/60', icon: XCircle },
+  security_hold: { label: '安全闸拦截', color: 'text-rose-700 dark:text-rose-300', bg: 'bg-rose-50 dark:bg-rose-950/40', border: 'border-rose-300 dark:border-rose-900/60', icon: ShieldAlert },
   pending:  { label: '等待中',   color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/40', border: 'border-amber-200 dark:border-amber-900/60', icon: Clock },
 }
 
@@ -158,7 +160,7 @@ function humanizeErrorMessage(rawError?: string | null): { friendlyMsg: string; 
 }
 
 function getStageConfig(stage: string) {
-  if (stage === 'complete' || stage === 'error' || stage === 'pending') {
+  if (stage === 'complete' || stage === 'error' || stage === 'pending' || stage === 'security_hold') {
     return STAGE_CONFIG[stage]
   }
   return {
@@ -465,7 +467,8 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
               const StatusIcon = cfg.icon
               const isComplete = task.stage === 'complete'
               const isError = task.stage === 'error'
-              const isProcessing = !['complete', 'error'].includes(task.stage)
+              const isHeld = task.stage === 'security_hold'
+              const isProcessing = !['complete', 'error', 'security_hold'].includes(task.stage)
               const isRetryingThis = retryingTaskId === task.task_id
 
               const { friendlyMsg, rawError } = isError ? humanizeErrorMessage(task.error) : { friendlyMsg: '', rawError: null }
@@ -565,6 +568,13 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                               </span>
                             </>
                           )}
+
+                          {task.security && !isHeld && (
+                            <>
+                              <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700" />
+                              <SecurityStatusBadge summary={task.security} />
+                            </>
+                          )}
                         </div>
 
                         {/* 易读错误说明框 */}
@@ -605,6 +615,13 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                                 )}
                               </div>
                             )}
+                          </div>
+                        )}
+
+                        {isHeld && (
+                          <div className="mt-2 text-xs text-rose-600 dark:text-rose-400 flex items-center gap-2">
+                            <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                            <span>{task.message || '出境安全闸已在本地拦截，等待处置'}</span>
                           </div>
                         )}
 
@@ -668,6 +685,17 @@ export default function HistoryView({ onOpenTask, onTaskDeleted }: HistoryViewPr
                           className="bg-purple-600 hover:bg-purple-700 text-white shadow-xs hover:shadow-purple-500/20 text-xs font-medium px-3.5 py-1.5 rounded-xl cursor-pointer flex items-center gap-1.5 transition-all"
                         >
                           实时控制台
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+
+                      {isHeld && (
+                        <Button
+                          size="sm"
+                          onClick={(e) => { e.stopPropagation(); onOpenTask(task.task_id, task.stage); }}
+                          className="bg-rose-600 hover:bg-rose-700 text-white shadow-xs text-xs font-medium px-3.5 py-1.5 rounded-xl cursor-pointer flex items-center gap-1.5 transition-all"
+                        >
+                          去处置
                           <ArrowRight className="w-3.5 h-3.5" />
                         </Button>
                       )}

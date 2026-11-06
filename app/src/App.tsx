@@ -46,8 +46,8 @@ function TaskPage() {
     getTaskStatus(taskId)
       .then((st) => {
         setStatus(st)
-        if (st.stage === 'awaiting_review' && st.campaign_id) {
-          // 出海子任务在译文审核阶段暂停，交给 Agent 会话页继续。
+        if ((st.stage === 'awaiting_review' || st.stage === 'security_hold') && st.campaign_id) {
+          // 出海子任务在译文审核或安全闸拦截时暂停，交给 Agent 会话页继续。
           clearActiveTaskId()
           navigate(`/campaign/${st.campaign_id}`, { replace: true })
           return
@@ -140,7 +140,7 @@ export default function App() {
 
       try {
         const st = await getTaskStatus(savedId)
-        if (st.stage === 'complete' || st.stage === 'error' || st.stage === 'awaiting_review') {
+        if (st.stage === 'complete' || st.stage === 'error' || st.stage === 'awaiting_review' || st.stage === 'security_hold') {
           clearActiveTaskId()
           setActiveProcessingTaskId(null)
         } else {
@@ -163,7 +163,7 @@ export default function App() {
     saveActiveTaskId(id)
     getTaskStatus(id)
       .then((st) => {
-        if (st.stage !== 'complete' && st.stage !== 'error' && st.stage !== 'awaiting_review') {
+        if (st.stage !== 'complete' && st.stage !== 'error' && st.stage !== 'awaiting_review' && st.stage !== 'security_hold') {
           setActiveProcessingTaskId(id)
         } else {
           clearActiveTaskId()

@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react'
 import { createTaskFromUrl, uploadVideo } from '@/lib/api'
+import { SecurityGuardNotice } from '../SecurityGuard'
 import {
   createCampaign,
   formatMediaDuration,
@@ -62,6 +63,7 @@ const STATUS_META: Record<string, { label: string; dot: string }> = {
   planned: { label: '待确认计划', dot: 'bg-sky-500' },
   running: { label: '执行中', dot: 'bg-indigo-500 animate-pulse' },
   awaiting_review: { label: '待人工审核', dot: 'bg-amber-500' },
+  security_hold: { label: '安全闸拦截', dot: 'bg-rose-600' },
   complete: { label: '已完成', dot: 'bg-emerald-500' },
   error: { label: '子任务已清理', dot: 'bg-rose-500' },
 }
@@ -581,6 +583,8 @@ export default function AgentHome() {
               ))}
             </div>
           )}
+
+          <SecurityGuardNotice compact className="mt-3 text-left" />
         </div>
 
         {recent.length > 0 && (

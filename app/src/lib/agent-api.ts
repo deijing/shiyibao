@@ -1,4 +1,4 @@
-import { apiFetch, apiUrl } from './api'
+import { apiFetch, apiUrl, type SecurityAction, type SecurityReport, type TaskSecurityPayload } from './api'
 import { loadSettings } from '@/components/SettingsPanel'
 
 export interface MarketInfo {
@@ -179,7 +179,7 @@ export interface CampaignSession {
   source_media?: SourceMediaInfo
   intent: AgentIntent
   plan: { markets: CampaignMarket[]; steps: PlanStep[] }
-  status: 'planned' | 'running' | 'awaiting_review' | 'complete' | 'error'
+  status: 'planned' | 'running' | 'awaiting_review' | 'security_hold' | 'complete' | 'error'
   markets: Record<string, CampaignMarket>
   messages: ChatMessage[]
   timeline: TimelineItem[]
@@ -305,3 +305,17 @@ export const sendCampaignMessage = (id: string, market: string, message: string)
   post<{ reply: string; changes: RevisionChange[] }>(`/api/agent/session/${id}/message`, { market, message })
 
 export const getBundleUrl = (id: string) => apiUrl(`/api/agent/session/${id}/bundle`)
+
+export interface SessionSecurityPayload {
+  source: TaskSecurityPayload
+  markets: Record<string, { task_id: string; stage: string; report: SecurityReport | null }>
+  session?: CampaignSession
+}
+
+export const getSessionSecurity = (id: string) =>
+  request<SessionSecurityPayload>(`/api/agent/session/${id}/security`)
+
+export const resolveSessionSecurity = (
+  id: string,
+  body: { action: SecurityAction; note?: string; include_warn?: boolean },
+) => post<SessionSecurityPayload>(`/api/agent/session/${id}/security/resolve`, body)

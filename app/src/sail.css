@@ -306,6 +306,7 @@ button.sail-chip:hover { border-color: var(--sail-blue); color: var(--sail-blue)
   background: var(--sail-soft); color: var(--sail-blue);
 }
 .sail-tab-badge.stage-awaiting_review { background: #f59e0b; color: #fff; }
+.sail-tab-badge.stage-security_hold { background: #e11d48; color: #fff; }
 .sail-tab-badge.stage-complete { background: #10b981; color: #fff; }
 .sail-tab-badge.stage-error, .sail-tab-badge.stage-missing { background: var(--sail-red); color: #fff; }
 

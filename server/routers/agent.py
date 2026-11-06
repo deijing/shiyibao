@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from ..config import MIMO_API_KEY, TASKS_DIR, UPLOADS_DIR, WORKSPACE_DIR, get_user_settings
 from ..models import TaskStage, TaskStartRequest
-from ..services import agent, samples
+from ..services import agent, outbound_guard, samples
 from ..services.subtitle_export import serialize_subtitles
 from . import task as task_router
 
@@ -74,6 +74,12 @@ class SubtitleEdit(BaseModel):
 class ApplyRequest(AgentAIConfig):
     edits: list[SubtitleEdit] = Field(default_factory=list)
     continue_render: bool = True
+
+
+class SecurityResolveRequest(AgentAIConfig):
+    action: Literal["redact", "acknowledge"]
+    note: str = Field(default="", max_length=500)
+    include_warn: bool = False
 
 
 class MessageRequest(AgentAIConfig):
@@ -511,6 +517,8 @@ def _refresh_statuses(session: dict) -> dict:
         session["status"] = "complete"
     elif all(stage in (TaskStage.ERROR.value, "missing") for stage in stages):
         session["status"] = "error"
+    elif any(stage == TaskStage.SECURITY_HOLD.value for stage in stages):
+        session["status"] = "security_hold"
     elif any(stage == TaskStage.AWAITING_REVIEW.value for stage in stages):
         session["status"] = "awaiting_review"
     else:
@@ -742,11 +750,42 @@ async def _launch_markets(session_id: str, cfg: agent.AIConfig, mimo_key: str) -
                 _trace(session, "语音识别", "原片尚未识别，正在进行一次共享语音识别（所有市场复用）", "api")
                 _save_session(session)
             await _ensure_shared_asr(source_id)
-        count = len(_read_json_list(task_router._task_dir(source_id) / "subtitles_src.json"))
+        source_segments = _read_json_list(task_router._task_dir(source_id) / "subtitles_src.json")
+        count = len(source_segments)
+        # 出境安全闸：在原片层面检测一次，未通过则所有市场都不启动翻译（台词不发往云端模型）。
+        report = await asyncio.to_thread(task_router.security_scan, source_id, source_segments,
+                                         ("source_text",), "outbound")
+        if report["level"] == outbound_guard.BLOCK:
+            await asyncio.to_thread(outbound_guard.append_audit, task_router._task_dir(source_id), "hold", report,
+                                    phase="outbound", session=session_id)
+            async with _session_lock:
+                session = _load_session(session_id)
+                _trace(session, "语音识别", f"共享识别结果就绪：{count} 句台词", "success")
+                message = (f"出境安全闸：检测到 {report['blocking']} 处疑似涉密 / 军事 / 隐私信息，"
+                           "已在本地拦截，未向云端模型发送任何台词")
+                for entry in session["markets"].values():
+                    await task_router._update_meta_async(entry["task_id"], stage=TaskStage.SECURITY_HOLD.value,
+                                                         progress=35, message=message, error=None)
+                _trace(session, "安全闸", f"本地检测到 {report['blocking']} 处高风险内容"
+                       f"（{task_router._category_text(report)}），全部市场暂停，等待脱敏或人工确认", "error")
+                _save_session(_refresh_statuses(session))
+            return
         async with _session_lock:
             session = _load_session(session_id)
             _trace(session, "语音识别", f"共享识别结果就绪：{count} 句台词，将复用于全部市场", "success")
+            _trace(session, "安全闸", "本地出境安全检测通过" + (
+                f"，有 {report['warnings']} 处提示（{task_router._category_text(report)}）"
+                if report["level"] == outbound_guard.WARN else "：未发现涉密、军事或个人隐私信息"),
+                "warning" if report["level"] == outbound_guard.WARN else "success")
+            source_cleared = (task_router._read_meta(source_id).get("security") or {}).get("cleared_keys") or []
             for code, entry in session["markets"].items():
+                meta = task_router._read_meta(entry["task_id"])
+                if meta.get("stage") not in (TaskStage.PENDING.value, TaskStage.SECURITY_HOLD.value):
+                    continue  # 处置后重新启动时，跳过已在运行或已完成的市场
+                if source_cleared:
+                    sec = meta.get("security") if isinstance(meta.get("security"), dict) else {}
+                    await task_router._update_meta_async(entry["task_id"], security={
+                        **sec, "cleared_keys": sorted(set(sec.get("cleared_keys") or []) | set(source_cleared))})
                 _copy_shared_cache(source_id, entry["task_id"])
                 await task_router.start_task(entry["task_id"],
                                              _start_request(cfg, mimo_key, entry, session, "translate"))
@@ -885,6 +924,71 @@ async def session_message(session_id: str, req: MessageRequest) -> dict:
     return result
 
 
+def _session_security_payload(session: dict) -> dict:
+    source_id = session["source_task_id"]
+    source = task_router._security_payload(source_id, task_router.security_scan(source_id, phase="check"))
+    markets = {}
+    for code, entry in session.get("markets", {}).items():
+        if not entry.get("task_id"):
+            continue
+        try:
+            meta = task_router._read_meta(entry["task_id"])
+        except HTTPException:
+            continue
+        has_text = bool(task_router._current_segment_dicts(entry["task_id"], meta))
+        report = task_router.security_scan(entry["task_id"], phase="check") if has_text else None
+        markets[code] = {"task_id": entry["task_id"], "stage": meta.get("stage"),
+                         "report": report}
+    return {"source": source, "markets": markets}
+
+
+@router.get("/agent/session/{session_id}/security")
+async def session_security(session_id: str) -> dict:
+    """原片与各市场字幕的本地出境安全检测结果。"""
+    session = _load_session(session_id)
+    return await asyncio.to_thread(_session_security_payload, session)
+
+
+@router.post("/agent/session/{session_id}/security/resolve")
+async def session_security_resolve(session_id: str, req: SecurityResolveRequest) -> dict:
+    """统一处置：脱敏原片台词或人工确认放行，然后重新启动被拦截的市场。"""
+    cfg, mimo_key = _resolve_ai(req)
+    async with _session_lock:
+        session = _refresh_statuses(_load_session(session_id))
+        source_id = session["source_task_id"]
+        held = [entry for entry in session["markets"].values()
+                if entry.get("task_id") and entry.get("stage") == TaskStage.SECURITY_HOLD.value]
+        if held:
+            _require_keys(cfg, mimo_key)
+        report = await asyncio.to_thread(task_router.resolve_security, source_id, req.action, req.note,
+                                         req.include_warn)
+        for entry in session["markets"].values():
+            tid = entry.get("task_id")
+            if not tid:
+                continue
+            if req.action == "redact":
+                if entry in held:
+                    # 原文已脱敏：删掉旧的识别缓存，重新启动时会从原片复制脱敏后的版本。
+                    (task_router._task_dir(tid) / "subtitles_src.json").unlink(missing_ok=True)
+            elif task_router._current_segment_dicts(tid):
+                await asyncio.to_thread(task_router.resolve_security, tid, "acknowledge", req.note)
+        action_text = "已在本地脱敏原片台词" if req.action == "redact" else f"已人工确认放行（理由：{req.note.strip()[:40]}）"
+        _trace(session, "安全闸", action_text, "success" if report["level"] != outbound_guard.BLOCK else "warning")
+        relaunch = bool(held) and report["level"] != outbound_guard.BLOCK
+        if relaunch:
+            for entry in held:
+                await task_router._update_meta_async(entry["task_id"], stage=TaskStage.PENDING.value, progress=0,
+                                                     message="安全闸已处置，准备翻译", error=None)
+            _trace(session, "安全闸", "复检通过，重新启动被暂停的市场", "info")
+        _save_session(_refresh_statuses(session))
+    if relaunch:
+        launcher = asyncio.create_task(_launch_markets(session_id, cfg, mimo_key))
+        task_router._background_tasks.add(launcher)
+        launcher.add_done_callback(task_router._background_tasks.discard)
+    payload = await asyncio.to_thread(_session_security_payload, _load_session(session_id))
+    return {**payload, "session": _refresh_statuses(_load_session(session_id))}
+
+
 def _copy_markdown(entry: dict) -> str:
     lines = [f"# {entry['flag']} {entry['name']} 出海素材", ""]
     review = entry.get("review") or {}
@@ -927,6 +1031,14 @@ def _bundle_segments(task_id: str, lang: str, *, with_video: bool) -> list[dict]
 async def session_bundle(session_id: str) -> FileResponse:
     session = _load_session(session_id)
     bundle_path = _session_dir(session_id) / "bundle.zip"
+    for entry in session.get("markets", {}).values():
+        if entry.get("task_id"):
+            try:
+                await asyncio.to_thread(task_router.ensure_outbound_clear, entry["task_id"],
+                                        f"打包{entry.get('name', '')}素材")
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
     # 交付成片按各任务当前的原声音量混音（在线程外完成异步混音）。
     exports: dict[str, Path] = {}
     for code, entry in session.get("markets", {}).items():

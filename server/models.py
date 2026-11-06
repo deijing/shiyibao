@@ -13,6 +13,8 @@ class TaskStage(StrEnum):
     SYNTHESIZING = "synthesizing"
     MIXING = "mixing"
     AWAITING_REVIEW = "awaiting_review"
+    # 出境安全闸：本地检测到疑似涉密 / 军事 / 隐私信息，任务在发往云端模型前暂停。
+    SECURITY_HOLD = "security_hold"
     COMPLETE = "complete"
     ERROR = "error"
 
@@ -65,6 +67,8 @@ class TaskStatusResponse(BaseModel):
     project_dir: str | None = None
     campaign_id: str | None = None
     market: str | None = None
+    # 出境安全闸结论：level / blocking / warnings / cleared / by_category（不含命中原文）。
+    security: dict | None = None
 
 
 

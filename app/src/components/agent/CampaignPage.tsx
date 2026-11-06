@@ -12,30 +12,37 @@ import {
   Package,
   PlayCircle,
   MessageSquareText,
+  ShieldAlert,
   Ship,
   Sparkles,
 } from 'lucide-react'
 import {
+  checkExportSecurity,
   getExportUrl,
   getOriginalTrackUrl,
   getTaskStatus,
   getThumbnailUrl,
   getVideoUrl,
+  type SecurityAction,
   type TaskStatus,
 } from '@/lib/api'
-import { exportAfterVolumeSaved, useOriginalTrack, useOriginalVolume } from '@/lib/original-track'
+import { exportWithSecurityCheck, useOriginalTrack, useOriginalVolume } from '@/lib/original-track'
 import OriginalVolumeControl from '../OriginalVolumeControl'
+import SecurityHoldPanel from '../SecurityHoldPanel'
 import {
   confirmCampaign,
   formatMediaDuration,
   getBundleUrl,
   getCampaign,
   getSampleVideoUrl,
+  getSessionSecurity,
   listMarkets,
   resolveAssetUrl,
+  resolveSessionSecurity,
   type CampaignMarket,
   type CampaignSession,
   type MarketInfo,
+  type SessionSecurityPayload,
 } from '@/lib/agent-api'
 import ReviewPanel, { CopyPanel } from './ReviewPanel'
 
@@ -52,7 +59,7 @@ const LANG_LABEL: Record<string, string> = {
   ar: '阿语',
   auto: '自动检测',
 }
-const IDLE_STAGES = new Set(['planned', 'awaiting_review', 'complete', 'error', 'missing'])
+const IDLE_STAGES = new Set(['planned', 'awaiting_review', 'security_hold', 'complete', 'error', 'missing'])
 const KIND_DOT: Record<string, string> = {
   success: 'bg-emerald-500',
   warning: 'bg-amber-500',
@@ -67,6 +74,8 @@ function stageLabel(market: CampaignMarket): string {
       return '待执行'
     case 'awaiting_review':
       return '待审核'
+    case 'security_hold':
+      return '安全拦截'
     case 'complete':
       return '已完成'
     case 'error':
@@ -126,6 +135,18 @@ function CampaignView({ campaignId }: { campaignId: string }) {
     }
   }, [session])
 
+  // 出境安全闸：会话被拦截时拉取源台词的命中详情
+  const [sessionSecurity, setSessionSecurity] = useState<SessionSecurityPayload | null>(null)
+  const sessionStatus = session?.status
+  useEffect(() => {
+    if (sessionStatus !== 'security_hold') return
+    let cancelled = false
+    getSessionSecurity(campaignId)
+      .then((data) => { if (!cancelled) setSessionSecurity(data) })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : '读取安全检测结果失败') })
+    return () => { cancelled = true }
+  }, [sessionStatus, campaignId])
+
   const markets = useMemo(() => (session ? Object.values(session.markets) : []), [session])
   const isRunning = markets.some((m) => !IDLE_STAGES.has(m.stage))
 
@@ -166,6 +187,28 @@ function CampaignView({ campaignId }: { campaignId: string }) {
       setError(err instanceof Error ? err.message : '启动失败')
     } finally {
       setConfirming(false)
+    }
+  }
+
+  const handleSecurityResolve = async (action: SecurityAction, note: string, includeWarn: boolean) => {
+    if (!session) return
+    const payload = await resolveSessionSecurity(session.id, { action, note, include_warn: includeWarn })
+    setSessionSecurity(payload)
+    if (payload.session) setSession(payload.session)
+    await refresh()
+  }
+
+  const checkBundleSecurity = async (): Promise<string | null> => {
+    if (!session) return null
+    try {
+      const data = await getSessionSecurity(session.id)
+      const blocked = Object.entries(data.markets)
+        .filter(([, m]) => m.report?.level === 'block')
+        .map(([code]) => session.markets[code]?.name ?? code)
+      if (blocked.length === 0) return null
+      return `出境安全闸：${blocked.join('、')} 的字幕复检仍有未处置的敏感信息，请到对应市场的精修工作台处置后再打包。`
+    } catch {
+      return null
     }
   }
 
@@ -318,6 +361,15 @@ function CampaignView({ campaignId }: { campaignId: string }) {
               />
             ) : (
               <>
+                {session.status === 'security_hold' && (
+                  <SecurityHoldPanel
+                    payload={sessionSecurity?.source ?? null}
+                    loading={!sessionSecurity}
+                    scopeHint={`所有市场共用同一份源台词，处置一次即对 ${markets.length} 个市场生效。`}
+                    onResolve={handleSecurityResolve}
+                  />
+                )}
+
                 {/* 市场标签 */}
                 <div className="flex flex-wrap items-center gap-2">
                   {markets.map((m) => (
@@ -334,7 +386,7 @@ function CampaignView({ campaignId }: { campaignId: string }) {
                   <div className="flex-1" />
                   <a
                     href={getBundleUrl(session.id)}
-                    onClick={exportAfterVolumeSaved()}
+                    onClick={exportWithSecurityCheck(undefined, checkBundleSecurity, setError)}
                     className={`sail-primary ${anyFinal ? '' : 'opacity-60'}`}
                     title="打包下载所有市场的成片、字幕、文案与 Agent 执行轨迹"
                   >
@@ -469,12 +521,21 @@ function MarketView({
   onRefresh: () => void
 }) {
   const reviewable = market.stage === 'awaiting_review' || market.stage === 'complete'
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   return (
     <div className="space-y-5">
       {!reviewable && (
         <div className="sail-card p-5">
-          {market.stage === 'error' || market.stage === 'missing' ? (
+          {market.stage === 'security_hold' ? (
+            <div className="text-sm flex items-start gap-2 text-rose-700 dark:text-rose-300">
+              <ShieldAlert className="w-4 h-4 mt-0.5" />
+              <div>
+                <p className="font-semibold">{market.flag} {market.name} 已被出境安全闸拦截</p>
+                <p className="mt-1 text-muted-foreground">源台词中检测到疑似敏感信息，尚未发送给翻译模型。请在上方「出境安全闸」面板处置后自动继续。</p>
+              </div>
+            </div>
+          ) : market.stage === 'error' || market.stage === 'missing' ? (
             <div className="text-sm text-[var(--sail-red)] flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5" />
               <div>
@@ -516,9 +577,24 @@ function MarketView({
             </h3>
             <div className="flex gap-2">
               <Link to={`/task/${market.task_id}`} className="sail-ghost"><PlayCircle className="w-3.5 h-3.5" /> 精修工作台</Link>
-              <a href={getExportUrl(market.task_id)} onClick={exportAfterVolumeSaved(market.task_id)} className="sail-ghost"><Download className="w-3.5 h-3.5" /> 下载成片</a>
+              <a
+                href={getExportUrl(market.task_id)}
+                onClick={exportWithSecurityCheck(market.task_id, () => checkExportSecurity(market.task_id!), setDownloadError)}
+                className="sail-ghost"
+              >
+                <Download className="w-3.5 h-3.5" /> 下载成片
+              </a>
             </div>
           </div>
+          {downloadError && (
+            <p className="text-xs text-[var(--sail-red)] flex items-start gap-1.5">
+              <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                {downloadError}{' '}
+                <Link to={`/task/${market.task_id}`} className="underline">去精修工作台修改字幕</Link>
+              </span>
+            </p>
+          )}
           <MarketVideo
             key={`${market.task_id}-${market.applied_edits}`}
             taskId={market.task_id}

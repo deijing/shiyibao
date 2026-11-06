@@ -24,12 +24,14 @@ import {
   getTaskStatus,
   fetchServerSettings,
   getExportUrl,
+  checkExportSecurity,
   scanDirectory,
   registerLocalTask,
   type TaskStatus,
   type ScannedVideoFile,
 } from '@/lib/api'
 import { saveActiveTaskId } from '@/lib/task-session'
+import { exportWithSecurityCheck } from '@/lib/original-track'
 import {
   loadSettings,
   saveSettings,
@@ -63,7 +65,7 @@ export interface BatchItem {
   fileItem: VideoQueueItem
   targetLang: string
   taskId?: string
-  status: 'idle' | 'uploading' | 'processing' | 'complete' | 'error'
+  status: 'idle' | 'uploading' | 'processing' | 'held' | 'complete' | 'error'
   progress: number
   stage: string
   message: string
@@ -216,7 +218,7 @@ export default function BatchState() {
 
     if (pendingItems.length === 0) {
       setBatchItems((current) => {
-        if (current.length > 0 && current.every((item) => item.status === 'complete' || item.status === 'error')) {
+        if (current.length > 0 && current.every((item) => item.status === 'complete' || item.status === 'error' || item.status === 'held')) {
           setIsBatchRunning(false)
         }
         return current
@@ -249,7 +251,9 @@ export default function BatchState() {
         const st = res.status
         const isComplete = st.stage === 'complete'
         const isError = st.stage === 'error'
-        const nextStatus: BatchItem['status'] = isComplete ? 'complete' : isError ? 'error' : 'processing'
+        // 出境安全闸拦截：该项暂停等待人工处置，不阻塞整批结束
+        const isHeld = st.stage === 'security_hold'
+        const nextStatus: BatchItem['status'] = isComplete ? 'complete' : isError ? 'error' : isHeld ? 'held' : 'processing'
         if (nextStatus === 'processing' || item.status === 'uploading') {
           activeCount++
         }
@@ -263,7 +267,7 @@ export default function BatchState() {
         }
       })
 
-      if (activeCount === 0 && updated.length > 0 && updated.every((item) => item.status === 'complete' || item.status === 'error')) {
+      if (activeCount === 0 && updated.length > 0 && updated.every((item) => item.status === 'complete' || item.status === 'error' || item.status === 'held')) {
         setIsBatchRunning(false)
       }
 
@@ -677,6 +681,7 @@ export default function BatchState() {
   const completedCount = batchItems.filter((i) => i.status === 'complete').length
   const processingCount = batchItems.filter((i) => i.status === 'processing' || i.status === 'uploading').length
   const errorCount = batchItems.filter((i) => i.status === 'error').length
+  const heldCount = batchItems.filter((i) => i.status === 'held').length
   const overallProgress =
     batchItems.length > 0
       ? Math.round(batchItems.reduce((acc, cur) => acc + cur.progress, 0) / batchItems.length)
@@ -731,6 +736,11 @@ export default function BatchState() {
             {processingCount > 0 && (
               <span className="text-blue-500 font-medium">
                 处理中: <strong>{processingCount}</strong>
+              </span>
+            )}
+            {heldCount > 0 && (
+              <span className="text-rose-600 font-medium" title="出境安全闸在本地拦截，点击各项的「工作台」处置">
+                安全拦截: <strong>{heldCount}</strong>
               </span>
             )}
             {errorCount > 0 && (
@@ -1089,7 +1099,9 @@ export default function BatchState() {
                     <div className="flex items-center gap-3 shrink-0">
                       <div className="w-24 flex flex-col space-y-0.5">
                         <div className="flex justify-between text-[10px] text-slate-400">
-                          <span>{item.status === 'complete' ? '完成' : item.status === 'error' ? '失败' : '处理'}</span>
+                          <span className={item.status === 'held' ? 'text-rose-600 font-semibold' : ''}>
+                            {item.status === 'complete' ? '完成' : item.status === 'error' ? '失败' : item.status === 'held' ? '安全拦截' : '处理'}
+                          </span>
                           <span>{item.progress}%</span>
                         </div>
                         <div className="w-full bg-slate-200 dark:bg-slate-700 h-1 rounded-full overflow-hidden">
@@ -1097,7 +1109,7 @@ export default function BatchState() {
                             className={`h-full rounded-full transition-all ${
                               item.status === 'complete'
                                 ? 'bg-emerald-500'
-                                : item.status === 'error'
+                                : item.status === 'error' || item.status === 'held'
                                 ? 'bg-rose-500'
                                 : 'bg-blue-500'
                             }`}
@@ -1124,6 +1136,9 @@ export default function BatchState() {
                         <a
                           href={getExportUrl(item.taskId)}
                           download
+                          onClick={exportWithSecurityCheck(item.taskId, () => checkExportSecurity(item.taskId!), (msg) =>
+                            setBatchItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, message: msg } : it))),
+                          )}
                           className="p-1 rounded text-emerald-600 hover:text-emerald-700"
                           title="下载"
                         >

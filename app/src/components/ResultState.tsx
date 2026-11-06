@@ -38,6 +38,7 @@ import {
   MessageSquareText,
   MessagesSquare,
   ScrollText,
+  ShieldCheck,
 } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { Button } from '@/components/ui/button'
@@ -51,9 +52,11 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { exportSubtitles, type SubtitleExportContent, type SubtitleExportFormat, getSubtitles, getAudioUrl, getExportUrl, getVideoUrl, getOriginalTrackUrl, getTaskStatus, analyzeSubtitlesAI, type SubtitleSegment, type TaskStatus } from '@/lib/api'
+import { exportSubtitles, getTaskSecurity, resolveTaskSecurity, type SecurityAction, type TaskSecurityPayload, type SubtitleExportContent, type SubtitleExportFormat, getSubtitles, getAudioUrl, getExportUrl, getVideoUrl, getOriginalTrackUrl, getTaskStatus, analyzeSubtitlesAI, type SubtitleSegment, type TaskStatus } from '@/lib/api'
 import { loadSettings } from './SettingsPanel'
 import { flushOriginalVolume, useOriginalTrack, useOriginalVolume } from '@/lib/original-track'
+import SecurityHoldPanel from './SecurityHoldPanel'
+import { SecurityStatusBadge } from './SecurityGuard'
 import OriginalVolumeControl from './OriginalVolumeControl'
 
 interface ResultStateProps {
@@ -276,6 +279,8 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
   const [copiedSubtitles, setCopiedSubtitles] = useState(false)
   const [exportContent, setExportContent] = useState<SubtitleExportContent>('translated')
   const [subtitleExportError, setSubtitleExportError] = useState('')
+  // 出境安全闸：导出前本地复检仍有未处置项时弹出处置面板
+  const [securityPayload, setSecurityPayload] = useState<TaskSecurityPayload | null>(null)
   const [copiedAi, setCopiedAi] = useState(false)
 
   // AI 分析状态
@@ -480,6 +485,24 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
 
   const exportContentLabel = { translated: '译文', source: '原文', bilingual: '双语' }[exportContent]
 
+  /** 导出前本地复检；被拦截时弹出处置面板并返回 false。 */
+  const passSecurityCheck = async (): Promise<boolean> => {
+    try {
+      const payload = await getTaskSecurity(taskId)
+      if (payload.report.level !== 'block') return true
+      setSecurityPayload(payload)
+      return false
+    } catch {
+      return true // 复检接口不可用时由导出接口自身的 409 兜底
+    }
+  }
+
+  const handleSecurityResolve = async (action: SecurityAction, note: string, includeWarn: boolean) => {
+    const payload = await resolveTaskSecurity(taskId, { action, note, include_warn: includeWarn })
+    setSecurityPayload(payload.report.level === 'block' ? payload : null)
+    getTaskStatus(taskId).then(setTaskStatus).catch(() => {})
+  }
+
   const handleExportSubtitles = async (format: SubtitleExportFormat) => {
     setSubtitleExportError('')
     try {
@@ -488,7 +511,9 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
       const mime = format === 'json' ? 'application/json' : format === 'vtt' ? 'text/vtt' : 'text/plain'
       downloadTextFile(`${baseName}_${exportContentLabel}字幕.${format}`, content, `${mime};charset=utf-8`)
     } catch (error) {
-      setSubtitleExportError(error instanceof Error ? error.message : '字幕导出失败')
+      const message = error instanceof Error ? error.message : '字幕导出失败'
+      setSubtitleExportError(message)
+      if (message.includes('出境安全闸')) void passSecurityCheck()
     }
   }
 
@@ -648,7 +673,15 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
 
   // 获取任务状态与字幕
   useEffect(() => {
-    getTaskStatus(taskId).then(setTaskStatus).catch(() => {})
+    getTaskStatus(taskId)
+      .then((st) => {
+        setTaskStatus(st)
+        // 早于安全闸创建的任务没有检测结论：打开时在本机补检一次（不涉及云端），徽章即可显示真实结果
+        if (!st.security) {
+          return getTaskSecurity(taskId).then(() => getTaskStatus(taskId)).then(setTaskStatus)
+        }
+      })
+      .catch(() => {})
     getSubtitles(taskId)
       .then((data) => {
         if (data && data.length > 0) {
@@ -899,6 +932,17 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
 
   return (
     <div className="flex-grow flex flex-col p-4 sm:p-6 max-w-[1680px] mx-auto w-full select-none">
+      {securityPayload && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/50 backdrop-blur-sm p-4 pt-16 select-text">
+          <SecurityHoldPanel
+            payload={securityPayload}
+            scopeHint="成片已生成，无法再脱敏源字幕：可修改字幕后重新导出，或填写理由人工放行。"
+            onResolve={handleSecurityResolve}
+            onAbort={() => setSecurityPayload(null)}
+            abortLabel="取消导出"
+          />
+        </div>
+      )}
       {/* 左右分栏布局：左侧原版视频主卡片 + 右侧独立白底字幕与 AI 学习卡片 (中间隔开 gap-5) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 xl:gap-6 items-start">
 
@@ -906,9 +950,9 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
         <div className="lg:col-span-8 xl:col-span-8 flex flex-col bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-xl dark:shadow-2xl overflow-hidden">
           
           {/* 顶部集成式工具栏 */}
-          <div className="bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-5 py-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 text-xs font-semibold shadow-2xs">
+          <div className="bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-5 py-3.5 flex flex-col sm:flex-row sm:flex-wrap justify-between items-start sm:items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap whitespace-nowrap">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full whitespace-nowrap bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 text-xs font-semibold shadow-2xs">
                 <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                 任务已完成
               </div>
@@ -922,11 +966,12 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                   {copiedId ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
+              {taskStatus && <SecurityStatusBadge summary={taskStatus.security} className="py-1" />}
             </div>
 
             {/* 自动生成的视频标题 */}
             {taskStatus?.video_title && (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-50/90 dark:bg-purple-500/10 border border-purple-200/80 dark:border-purple-500/20 text-purple-700 dark:text-purple-300 font-semibold text-xs max-w-sm lg:max-w-md shadow-2xs">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-50/90 dark:bg-purple-500/10 border border-purple-200/80 dark:border-purple-500/20 text-purple-700 dark:text-purple-300 font-semibold text-xs min-w-0 max-w-sm lg:max-w-md shadow-2xs">
                 <Film className="w-4 h-4 text-purple-500 shrink-0" />
                 <span className="truncate" title={taskStatus.video_title}>
                   {taskStatus.video_title}
@@ -934,7 +979,7 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
               </div>
             )}
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 shrink-0 whitespace-nowrap">
               <Button
                 variant="outline"
                 onClick={onReset}
@@ -962,8 +1007,9 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                         onClick={() => {
                           setSelectedQualityId(opt.id)
                           const exportFilename = getExportFilename(taskStatus?.filename, taskStatus?.target_lang)
-                          // 先把防抖中的原声音量写到后端，导出才会按滑块当前值混音。
-                          void flushOriginalVolume(taskId).then(() => {
+                          // 先把防抖中的原声音量写到后端，导出才会按滑块当前值混音；再做出境安全闸复检。
+                          void flushOriginalVolume(taskId).then(async () => {
+                            if (!(await passSecurityCheck())) return
                             const a = document.createElement('a')
                             a.href = exportUrl
                             a.download = exportFilename
@@ -984,15 +1030,23 @@ export default function ResultState({ taskId, onReset }: ResultStateProps) {
                   <DropdownMenuSeparator className="bg-slate-100 dark:bg-slate-800" />
                   <DropdownMenuItem
                     onClick={() => {
-                      const a = document.createElement('a')
-                      a.href = ttsAudioUrl
-                      a.download = ''
-                      a.click()
+                      // 配音音轨同样是译文内容，下载前走一次出境安全闸复检
+                      void passSecurityCheck().then((ok) => {
+                        if (!ok) return
+                        const a = document.createElement('a')
+                        a.href = ttsAudioUrl
+                        a.download = ''
+                        a.click()
+                      })
                     }}
                     className="hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-xs cursor-pointer text-slate-700 dark:text-slate-300 px-3 py-2"
                   >
                     仅导出 AI 配音 (WAV)
                   </DropdownMenuItem>
+                  <div className="flex items-start gap-1.5 px-3 pt-2 pb-1 text-[10px] leading-snug text-emerald-700 dark:text-emerald-400">
+                    <ShieldCheck className="w-3 h-3 mt-px shrink-0" />
+                    导出前自动经出境安全闸本地复检
+                  </div>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

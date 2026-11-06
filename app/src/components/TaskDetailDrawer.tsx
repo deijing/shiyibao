@@ -19,8 +19,8 @@ import {
   AlertCircle,
   ListOrdered,
 } from 'lucide-react'
-import { exportAfterVolumeSaved } from '@/lib/original-track'
-import { getTaskStatus, getTaskLogs, getExportUrl, getSubtitles, startTask, getThumbnailUrl, type TaskStatus, type TaskLogItem } from '@/lib/api'
+import { exportWithSecurityCheck } from '@/lib/original-track'
+import { getTaskStatus, getTaskLogs, getExportUrl, checkExportSecurity, getSubtitles, startTask, getThumbnailUrl, type TaskStatus, type TaskLogItem } from '@/lib/api'
 import { loadSettings } from './SettingsPanel'
 import { Button } from '@/components/ui/button'
 
@@ -59,7 +59,7 @@ const LANG_LABELS: Record<string, string> = {
 const PIPELINE_STEPS = [
   { id: 'upload', label: '上传解析', stages: ['pending', 'downloading', 'extracting_audio'] },
   { id: 'asr', label: '语音识别(ASR)', stages: ['transcribing'] },
-  { id: 'translate', label: 'AI 翻译核心', stages: ['translating'] },
+  { id: 'translate', label: 'AI 翻译核心', stages: ['translating', 'security_hold'] },
   { id: 'tts', label: '音色克隆与合成', stages: ['synthesizing'] },
   { id: 'mix', label: '视频合并导出', stages: ['mixing', 'complete'] },
 ]
@@ -152,7 +152,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
     if (!isOpen || !status) return
     const stage = status.stage
 
-    if (['complete', 'error', 'pending'].includes(stage)) return
+    if (['complete', 'error', 'pending', 'awaiting_review', 'security_hold'].includes(stage)) return
 
     const phrases = PLACEBO_LOG_PHRASES[stage] || [
       '系统正在后台进行多模态 AI 数据推理...',
@@ -242,6 +242,12 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
 
   const handleDownloadSubtitles = async () => {
     if (!taskId) return
+    // 与成片导出一致：先过出境安全闸复检
+    const blocked = await checkExportSecurity(taskId)
+    if (blocked) {
+      alert(blocked)
+      return
+    }
     try {
       const subs = await getSubtitles(taskId)
       if (!subs || subs.length === 0) {
@@ -271,7 +277,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
   let activeStepIndex = 0
   if (currentStage === 'extracting_audio') activeStepIndex = 0
   else if (currentStage === 'transcribing') activeStepIndex = 1
-  else if (currentStage === 'translating') activeStepIndex = 2
+  else if (currentStage === 'translating' || currentStage === 'security_hold') activeStepIndex = 2
   else if (currentStage === 'synthesizing') activeStepIndex = 3
   else if (currentStage === 'mixing') activeStepIndex = 4
   else if (currentStage === 'complete') activeStepIndex = 5
@@ -321,7 +327,7 @@ export default function TaskDetailDrawer({ taskId, isOpen, onClose, onRetrySucce
                   <FileText className="w-3.5 h-3.5" />
                   导出字幕
                 </Button>
-                <a href={getExportUrl(taskId)} download onClick={exportAfterVolumeSaved(taskId)}>
+                <a href={getExportUrl(taskId)} download onClick={exportWithSecurityCheck(taskId, () => checkExportSecurity(taskId), (msg) => alert(msg))}>
                   <Button
                     size="sm"
                     className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded-xl gap-1.5 shadow-xs cursor-pointer"

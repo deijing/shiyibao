@@ -73,8 +73,10 @@ export interface GeminiModelItem {
 
 export interface TaskStatus {
   task_id: string
-  stage: 'pending' | 'downloading' | 'extracting_audio' | 'transcribing' | 'translating' | 'synthesizing' | 'mixing' | 'awaiting_review' | 'complete' | 'error'
+  stage: 'pending' | 'downloading' | 'extracting_audio' | 'transcribing' | 'translating' | 'synthesizing' | 'mixing' | 'awaiting_review' | 'security_hold' | 'complete' | 'error'
   progress: number
+  /** 出境安全闸的最近一次检测结论（不含命中原文） */
+  security?: SecuritySummary | null
   campaign_id?: string | null
   market?: string | null
   message: string
@@ -99,6 +101,95 @@ export interface TaskStatus {
   completed_chunks?: number
   chunks?: StreamChunk[]
   rendered_seconds?: number
+}
+
+export type SecurityLevel = 'block' | 'warn' | 'pass'
+
+export interface SecuritySummary {
+  level: SecurityLevel
+  scanned_at?: string
+  total: number
+  blocking: number
+  warnings: number
+  cleared: number
+  by_category: Record<string, number>
+  phase?: string
+  resolution?: string | null
+}
+
+export interface SecurityHit {
+  id: string
+  category: string
+  label: string
+  severity: 'block' | 'warn'
+  reason: string
+  /** 隐私类命中已在后端打码 */
+  match: string
+  excerpt: string
+  masked: boolean
+  cleared: boolean
+  index: number | null
+  field: string
+  time: number | null
+}
+
+export interface SecurityReport extends SecuritySummary {
+  engine: string
+  hits: SecurityHit[]
+  scope_note: string
+}
+
+export interface SecurityAuditEntry {
+  ts: string
+  action: 'hold' | 'acknowledge' | 'redact' | 'export_blocked' | string
+  level?: SecurityLevel
+  total?: number
+  blocking?: number
+  note?: string
+  sentences?: number
+  target?: string
+}
+
+export interface TaskSecurityPayload {
+  task_id: string
+  stage: string
+  report: SecurityReport
+  audit: SecurityAuditEntry[]
+  can_redact: boolean
+}
+
+export type SecurityAction = 'redact' | 'acknowledge'
+
+async function securityRequest(path: string, init?: RequestInit): Promise<TaskSecurityPayload> {
+  const res = await apiFetch(path, init)
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.detail || `安全检测请求失败 (${res.status})`)
+  return data as TaskSecurityPayload
+}
+
+export function getTaskSecurity(taskId: string): Promise<TaskSecurityPayload> {
+  return securityRequest(`/api/task/${taskId}/security`)
+}
+
+export function resolveTaskSecurity(
+  taskId: string,
+  body: { action: SecurityAction; note?: string; include_warn?: boolean },
+): Promise<TaskSecurityPayload> {
+  return securityRequest(`/api/task/${taskId}/security/resolve`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+/** 导出前本地复检；仍有未处置的拦截项时返回提示文本，否则返回 null。 */
+export async function checkExportSecurity(taskId: string): Promise<string | null> {
+  try {
+    const { report } = await getTaskSecurity(taskId)
+    if (report.level !== 'block') return null
+    return `出境安全闸：导出前复检发现 ${report.blocking} 处疑似涉密 / 军事 / 隐私信息，请先在任务页处置（一键脱敏或人工确认放行）。`
+  } catch {
+    return null // 复检接口不可用时交给导出接口本身的 409 兜底
+  }
 }
 
 export interface StreamChunk {
@@ -135,6 +226,7 @@ export interface TaskListItem {
   created_at?: string
   target_lang?: string
   voice?: string
+  security?: SecuritySummary | null
 }
 
 export interface PerformanceSettings {

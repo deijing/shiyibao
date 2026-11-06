@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings, Eye, EyeOff, Sliders, KeyRound, Mic, CheckCircle2, AlertCircle, Loader2, ExternalLink, RefreshCcw, Languages, Shield, ShieldCheck, Volume2, VolumeX, FastForward, MonitorPlay, Plug, SlidersHorizontal } from 'lucide-react'
+import { Settings, Eye, EyeOff, Sliders, KeyRound, Mic, CheckCircle2, AlertCircle, Loader2, ExternalLink, RefreshCcw, Languages, Shield, ShieldAlert, ShieldCheck, Volume2, VolumeX, FastForward, MonitorPlay, Plug, SlidersHorizontal } from 'lucide-react'
 import { ChangelogModal } from './ChangelogModal'
 import { EnvironmentCheckModal } from './EnvironmentCheckModal'
 import {
@@ -40,6 +40,17 @@ export interface AppSettings {
   durationMode?: 'speed_audio' | 'slow_video' | 'adaptive'
   originalAudioVolume?: number
   customGeminiModels?: { id: string; name: string }[]
+  /** 出境安全闸自定义敏感词（单位名、项目代号等），仅在本地检测使用 */
+  securityTerms?: string[]
+}
+
+function parseSecurityTerms(text: string): string[] {
+  const seen = new Set<string>()
+  for (const raw of text.split(/[\n,，、;；]+/)) {
+    const term = raw.trim()
+    if (term.length >= 2 && term.length <= 50) seen.add(term)
+  }
+  return [...seen].slice(0, 500)
 }
 
 export const SOURCE_LANGUAGES = [
@@ -308,6 +319,7 @@ export function mergeFillEmpty(
 export default function SettingsPanel() {
   const [open, setOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
+  const [securityTermsText, setSecurityTermsText] = useState(() => (loadSettings().securityTerms ?? []).join('\n'))
   const [showGeminiKey, setShowGeminiKey] = useState(false)
   const [showXiaomiKey, setShowXiaomiKey] = useState(false)
 
@@ -343,6 +355,13 @@ export default function SettingsPanel() {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
           return merged
         })
+      }
+      // 自定义敏感词以服务端为准（检测在后端进行），本地为空时回填
+      const serverTerms: unknown = serverData?.securityTerms
+      if (Array.isArray(serverTerms) && serverTerms.length > 0 && !(loadSettings().securityTerms?.length)) {
+        const terms = serverTerms.filter((t): t is string => typeof t === 'string')
+        setSecurityTermsText(terms.join('\n'))
+        setSettings((prev) => ({ ...prev, securityTerms: terms }))
       }
     })
   }, [])
@@ -1105,6 +1124,33 @@ export default function SettingsPanel() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* 行五：出境安全闸自定义敏感词 */}
+            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-3.5 h-3.5 text-rose-500 stroke-[1.5]" />
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    出境安全闸 · 自定义敏感词 (Outbound Guard)
+                  </h3>
+                </div>
+                <span className="text-[11px] font-mono text-slate-500">{settings.securityTerms?.length ?? 0} 条</span>
+              </div>
+              <textarea
+                value={securityTermsText}
+                onChange={(e) => {
+                  setSecurityTermsText(e.target.value)
+                  const terms = parseSecurityTerms(e.target.value)
+                  setSettings((s) => ({ ...s, securityTerms: terms }))
+                }}
+                rows={3}
+                placeholder={'每行一个，或用逗号分隔，例如：\n某某研究所\n项目代号 X-17'}
+                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/40 px-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-500/30"
+              />
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                台词在发送给云端翻译模型前，会先在本机检测个人隐私、国家秘密、军事敏感、精确坐标与这里填写的单位名 / 项目代号等；命中即暂停任务，由你选择一键脱敏、人工放行或终止。导出成片、字幕和素材包前还会再复检一次。检测不上传任何内容，也不识别画面中的视觉信息。
+              </p>
             </div>
           </div>
         </div>

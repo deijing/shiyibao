@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
+import { SecurityGuardNotice } from './SecurityGuard'
 
 interface UploadStateProps {
   onUploadComplete: (taskId: string) => void
@@ -654,6 +655,8 @@ export default function UploadState({ onUploadComplete }: UploadStateProps) {
               {(settings.originalAudioVolume ?? 0.2) > 0 ? '一键静音原声' : '开启原声 (20%)'}
             </button>
           </div>
+
+          <SecurityGuardNotice className="mt-4" customTermCount={settings.securityTerms?.length ?? 0} />
         </div>
 
         {/* 右侧 35%：日志 / 交互侧边面板 */}

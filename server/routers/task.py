@@ -8,6 +8,7 @@ import uuid
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -17,7 +18,7 @@ from filelock import FileLock
 from pydantic import BaseModel, Field
 
 from .. import security
-from ..config import MIMO_API_KEY, PROJECTS_DIR, TASKS_DIR, UPLOADS_DIR
+from ..config import MIMO_API_KEY, PROJECTS_DIR, TASKS_DIR, UPLOADS_DIR, get_user_settings
 from ..models import (
     AIAnalyzeRequest,
     AIAnalyzeResponse,
@@ -34,7 +35,7 @@ from ..models import (
 )
 from ..performance import task_limiter
 from ..services.subtitle_export import SubtitleContent, SubtitleFormat, serialize_subtitles
-from ..services import asr, audio, downloader, language_detector, mixer, retiming, translate, tts
+from ..services import asr, audio, downloader, language_detector, mixer, outbound_guard, retiming, translate, tts
 
 logger = logging.getLogger(__name__)
 
@@ -360,6 +361,119 @@ def _repair_stored_title(meta: dict) -> None:
         meta["project_folder_name"], meta["project_dir"] = _sync_project_folder_alias(task_id, cleaned)
 
 
+# ---------------------------------------------------------------------------
+# 出境安全闸
+# ---------------------------------------------------------------------------
+
+def _security_terms() -> list[str]:
+    terms = get_user_settings().get("securityTerms") or []
+    return [t for t in terms if isinstance(t, str)] if isinstance(terms, list) else []
+
+
+def _public_security(sec: dict | None) -> dict | None:
+    if not isinstance(sec, dict):
+        return None
+    return {k: v for k, v in sec.items() if k != "cleared_keys"}
+
+
+def _category_text(report: dict) -> str:
+    return "、".join(f"{outbound_guard.CATEGORY_LABELS.get(c, c)} {n}"
+                    for c, n in (report.get("by_category") or {}).items()) or "无"
+
+
+def _current_segment_dicts(task_id: str, meta: dict | None = None) -> list[dict]:
+    """与 task_subtitles 同样的取法：优先当前成片对应的字幕，其次译文，最后原文。"""
+    meta = meta or _read_meta(task_id)
+    task_dir = _task_dir(task_id)
+    path = task_dir / f"subtitles_{meta.get('target_lang', 'zh')}.json"
+    if not path.exists():
+        path = task_dir / "subtitles_src.json"
+    retimed = task_dir / "subtitles_retimed.json"
+    if meta.get("duration_mode") in RETIMED_MODES and retimed.exists():
+        path = retimed
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def security_scan(task_id: str, segments: list[dict] | None = None,
+                  fields: tuple[str, ...] = ("source_text", "translated_text"), phase: str = "check") -> dict:
+    """扫描任务当前字幕与标题，落盘报告并更新 meta 中的结论（已确认放行的命中不再拦截）。"""
+    meta = _read_meta(task_id)
+    if segments is None:
+        segments = _current_segment_dicts(task_id, meta)
+    sec = meta.get("security") if isinstance(meta.get("security"), dict) else {}
+    cleared = list(sec.get("cleared_keys") or [])
+    title = (meta.get("video_title") or "").strip()
+    report = outbound_guard.scan_segments(
+        segments, fields, extra_texts={"video_title": title} if title else None,
+        custom_terms=_security_terms(), cleared_keys=cleared)
+    outbound_guard.save_report(_task_dir(task_id), report)
+    _update_meta(task_id, security={**outbound_guard.summary(report), "phase": phase, "cleared_keys": cleared,
+                                    "resolution": sec.get("resolution")})
+    return report
+
+
+def ensure_outbound_clear(task_id: str, action: str = "导出") -> None:
+    """导出 / 打包 / 发往云端前的复检：存在未处理的拦截项时返回 409。"""
+    report = security_scan(task_id, phase="export")
+    if report["level"] == outbound_guard.BLOCK:
+        outbound_guard.append_audit(_task_dir(task_id), "export_blocked", report, target=action)
+        raise HTTPException(
+            status_code=409,
+            detail=f"出境安全闸：{action}前复检发现 {report['blocking']} 处疑似涉密 / 军事 / 隐私信息"
+                   f"（{_category_text(report)}），请先修改字幕或人工确认放行")
+
+
+def resolve_security(task_id: str, action: str, note: str = "", include_warn: bool = False,
+                     extra_keys: list[str] | None = None) -> dict:
+    """处置拦截：redact 在本地对原文脱敏（仅限尚未翻译时）；acknowledge 记录理由后放行当前命中。"""
+    active = _active_tasks.get(task_id)
+    if active is not None and not active.done():
+        raise HTTPException(status_code=409, detail="任务正在处理中，请稍后再处置")
+    meta = _read_meta(task_id)
+    task_dir = _task_dir(task_id)
+    sec = meta.get("security") if isinstance(meta.get("security"), dict) else {}
+    note = (note or "").strip()
+    if action == "acknowledge":
+        if len(note) < 4:
+            raise HTTPException(status_code=400, detail="人工确认放行需填写不少于 4 个字的理由（如：已公开报道、已获授权）")
+        report = security_scan(task_id, phase=sec.get("phase") or "check")
+        keys = {h["key"] for h in report["hits"] if h["severity"] == outbound_guard.BLOCK and not h["cleared"]}
+        keys |= set(extra_keys or [])
+        cleared = sorted(set(sec.get("cleared_keys") or []) | keys)
+        _update_meta(task_id, security={**(_read_meta(task_id).get("security") or {}), "cleared_keys": cleared,
+                                        "resolution": "acknowledge"})
+        report = security_scan(task_id, phase=sec.get("phase") or "check")
+        outbound_guard.append_audit(task_dir, "acknowledge", report, note=note[:300], keys=len(keys))
+        _append_log(task_id, "安全闸", f"已人工确认放行 {len(keys)} 处命中，理由：{note[:60]}", "info")
+    elif action == "redact":
+        translated = task_dir / f"subtitles_{meta.get('target_lang', 'zh')}.json"
+        if translated.exists() or (task_dir / "final.mp4").exists():
+            raise HTTPException(status_code=409, detail="已生成译文或成片，无法再对原文脱敏；请在字幕编辑中修改，或人工确认放行")
+        src = task_dir / "subtitles_src.json"
+        try:
+            segments = json.loads(src.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="尚无可脱敏的原文字幕") from exc
+        changed = outbound_guard.redact_segments(
+            segments, "source_text", custom_terms=_security_terms(), include_warn=include_warn,
+            skip_keys=sec.get("cleared_keys") or [])
+        tmp = src.with_suffix(".tmp")
+        tmp.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(src)
+        _update_meta(task_id, security={**sec, "resolution": "redact"})
+        report = security_scan(task_id, segments, ("source_text",), "outbound")
+        outbound_guard.append_audit(task_dir, "redact", report, sentences=changed, include_warn=include_warn,
+                                    note=note[:300])
+        _append_log(task_id, "安全闸", f"已在本地脱敏 {changed} 句台词（原声音轨仍含原话，建议原声音量调为 0）", "success")
+    else:
+        raise HTTPException(status_code=400, detail="action 只能是 redact 或 acknowledge")
+    return report
+
+
 def _status(meta: dict) -> TaskStatusResponse:
     _repair_stored_title(meta)
     video_title = meta.get("video_title")
@@ -402,6 +516,7 @@ def _status(meta: dict) -> TaskStatusResponse:
         project_dir=proj_dir,
         campaign_id=meta.get("campaign_id"),
         market=meta.get("market"),
+        security=_public_security(meta.get("security")),
     )
 
 
@@ -521,6 +636,23 @@ async def _execute_pipeline(task_id: str, req: TaskStartRequest) -> None:
             log_cb("语音识别", "启动 BcutASR (必剪云端语音识别引擎) 提取语音段落...")
             segments = await asr.transcribe(task_dir, audio_path, log_cb=log_cb)
             log_cb("语音识别", f"语音识别完成，共提取 {len(segments)} 条有效台词分句", "success")
+
+        # 2.5 出境安全闸：台词发往境外大模型（语言识别 / 翻译 / 标题）之前，先在本地离线检测。
+        report = await asyncio.to_thread(security_scan, task_id, segments, ("source_text",), "outbound")
+        if report["level"] == outbound_guard.BLOCK:
+            await asyncio.to_thread(outbound_guard.append_audit, task_dir, "hold", report, phase="outbound")
+            await _update_meta_async(
+                task_id, stage=TaskStage.SECURITY_HOLD.value, progress=35,
+                message=f"出境安全闸：检测到 {report['blocking']} 处疑似涉密 / 军事 / 隐私信息，"
+                        "已在本地拦截，未向云端模型发送任何台词")
+            log_cb("安全闸", f"🛡️ 本地检测到 {report['blocking']} 处高风险内容（"
+                   f"{_category_text(report)}），任务已暂停，台词未离开本机。请脱敏或人工确认后继续", "error")
+            return
+        if report["level"] == outbound_guard.WARN:
+            log_cb("安全闸", f"🛡️ 本地出境安全检测通过，有 {report['warnings']} 处提示（{_category_text(report)}），"
+                   "建议在成片前复核", "info")
+        else:
+            log_cb("安全闸", "🛡️ 本地出境安全检测通过：未发现涉密、军事或个人隐私信息", "success")
 
         source_lang = req.source_lang or "auto"
         if source_lang == "auto":
@@ -895,6 +1027,7 @@ async def list_tasks() -> list[dict]:
                         await _update_meta_async(meta["task_id"], video_title=derived)
                     except Exception:
                         pass
+            meta["security"] = _public_security(meta.get("security"))
             tasks.append(meta)
         except (json.JSONDecodeError, KeyError):
             continue
@@ -905,6 +1038,33 @@ async def list_tasks() -> list[dict]:
 @router.get("/task/{task_id}/status", response_model=TaskStatusResponse)
 async def task_status(task_id: str) -> TaskStatusResponse:
     return _status(_read_meta(task_id))
+
+
+class SecurityResolveRequest(BaseModel):
+    action: Literal["redact", "acknowledge"]
+    note: str = Field(default="", max_length=500)
+    include_warn: bool = False
+
+
+def _security_payload(task_id: str, report: dict) -> dict:
+    meta = _read_meta(task_id)
+    return {"task_id": task_id, "stage": meta.get("stage"), "report": report,
+            "audit": outbound_guard.read_audit(_task_dir(task_id)),
+            "can_redact": not (_task_dir(task_id) / f"subtitles_{meta.get('target_lang', 'zh')}.json").exists()
+            and not (_task_dir(task_id) / "final.mp4").exists()}
+
+
+@router.get("/task/{task_id}/security")
+async def task_security(task_id: str) -> dict:
+    """本地重新检测一次当前字幕与标题，返回命中详情与处置记录。"""
+    report = await asyncio.to_thread(security_scan, task_id)
+    return _security_payload(task_id, report)
+
+
+@router.post("/task/{task_id}/security/resolve")
+async def task_security_resolve(task_id: str, req: SecurityResolveRequest) -> dict:
+    report = await asyncio.to_thread(resolve_security, task_id, req.action, req.note, req.include_warn)
+    return _security_payload(task_id, report)
 
 
 @router.get("/task/{task_id}/subtitles", response_model=list[SubtitleSegment])
@@ -976,6 +1136,7 @@ async def export_task_subtitles(
     segments = await task_subtitles(task_id)
     if not segments:
         raise HTTPException(status_code=404, detail="暂无可导出的字幕")
+    await asyncio.to_thread(ensure_outbound_clear, task_id, "导出字幕")
     selected = [segment.model_dump() for segment in segments]
     if content != "bilingual" and not any(str(s.get(f"{content}_text") or "").strip() for s in selected):
         raise HTTPException(status_code=409, detail="所选语言暂无字幕内容")
@@ -1049,6 +1210,7 @@ async def set_original_volume(task_id: str, req: OriginalVolumeRequest) -> dict:
 
 @router.get("/task/{task_id}/export")
 async def task_export(task_id: str) -> FileResponse:
+    await asyncio.to_thread(ensure_outbound_clear, task_id, "导出成片")
     path = await _export_video_path(task_id)
 
     meta = _read_meta(task_id)
@@ -1516,6 +1678,12 @@ async def analyze_task_subtitles(task_id: str, req: AIAnalyzeRequest) -> AIAnaly
         # 使用快速智能离线分析
         analysis_text = _generate_offline_ai_analysis(subtitles, req.mode, req.custom_prompt)
         return AIAnalyzeResponse(success=True, analysis=analysis_text, mode=req.mode, message="离线模式提炼成功")
+
+    # 有 Key 时字幕会发往云端模型：先过出境安全闸。
+    try:
+        await asyncio.to_thread(ensure_outbound_clear, task_id, "AI 分析")
+    except HTTPException as exc:
+        return AIAnalyzeResponse(success=False, analysis=str(exc.detail), mode=req.mode)
 
     # 构建完整的字幕上下文
     lines = []

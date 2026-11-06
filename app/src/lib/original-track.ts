@@ -128,6 +128,35 @@ export function exportAfterVolumeSaved(taskId?: string) {
   }
 }
 
+/**
+ * 带出境安全闸复检的下载链接 onClick：先保存未落盘的原声音量，再本地复检；
+ * 仍有未处置的拦截项时不下载、交给 onBlocked 提示（否则浏览器会直接打开 409 的 JSON）。
+ */
+export function exportWithSecurityCheck(
+  taskId: string | undefined,
+  check: () => Promise<string | null>,
+  onBlocked: (message: string) => void,
+) {
+  return (e: ReactMouseEvent<HTMLAnchorElement>) => {
+    const anchor = e.currentTarget
+    if (anchor.dataset.securityPassed === '1') {
+      delete anchor.dataset.securityPassed
+      return
+    }
+    e.preventDefault()
+    void (async () => {
+      await (taskId ? flushOriginalVolume(taskId) : flushAllOriginalVolumes())
+      const blocked = await check()
+      if (blocked) {
+        onBlocked(blocked)
+        return
+      }
+      anchor.dataset.securityPassed = '1'
+      anchor.click()
+    })()
+  }
+}
+
 /** 任务级原声音量：本地即时更新，停手 600ms 后保存到后端（导出按该值混音）。 */
 export function useOriginalVolume(taskId: string, initial: number | undefined): [number, (v: number) => void] {
   const [volume, setVolume] = useState(initial ?? 0.2)

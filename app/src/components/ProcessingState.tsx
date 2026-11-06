@@ -20,8 +20,22 @@ import {
   Clapperboard,
   MonitorPlay,
 } from 'lucide-react'
-import { getTaskStatus, getTaskLogs, getSubtitles, startTask, type TaskStatus, type TaskLogItem, type SubtitleSegment } from '@/lib/api'
-import { clearActiveTaskId } from '@/lib/task-session'
+import {
+  getTaskStatus,
+  getTaskLogs,
+  getSubtitles,
+  startTask,
+  getTaskSecurity,
+  resolveTaskSecurity,
+  type TaskStatus,
+  type TaskLogItem,
+  type SubtitleSegment,
+  type TaskSecurityPayload,
+  type SecurityAction,
+} from '@/lib/api'
+import SecurityHoldPanel from './SecurityHoldPanel'
+import { SecurityStatusBadge } from './SecurityGuard'
+import { clearActiveTaskId, saveActiveTaskId } from '@/lib/task-session'
 import { useNavigate } from 'react-router-dom'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
@@ -41,7 +55,7 @@ const STAGE_ORDER = ['extracting_audio', 'transcribing', 'translating', 'synthes
 
 function stageToStepNumber(stage: TaskStatus['stage']): ProcessingStepIndex {
   if (stage === 'extracting_audio' || stage === 'pending' || stage === 'downloading') return 1
-  if (stage === 'transcribing' || stage === 'translating') return 2
+  if (stage === 'transcribing' || stage === 'translating' || stage === 'security_hold') return 2
   return 3
 }
 
@@ -64,6 +78,7 @@ function stageLabel(stage: TaskStatus['stage']): string {
     translating: '步骤 2/3: Gemini 大模型双语润色与翻译...',
     synthesizing: '步骤 3/3: MiMo 音色克隆与声学合成...',
     mixing: '步骤 3/3: FFmpeg 多轨混音与导出成片...',
+    security_hold: '出境安全闸：已在本地拦截，等待处置',
     complete: '🎉 全部流程处理完成！',
     error: '⚠️ 处理遇到错误',
   }
@@ -145,34 +160,61 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
 
   const [isRetrying, setIsRetrying] = useState(false)
 
+  // 出境安全闸：拦截后停在本地，处置完成再从缓存续跑
+  const [security, setSecurity] = useState<TaskSecurityPayload | null>(null)
+  const [securityLoading, setSecurityLoading] = useState(false)
+
+  const resumeTask = async (volumeOverride?: number) => {
+    const config = {
+      gemini_api_key: settings.geminiApiKey,
+      mimo_api_key: settings.xiaomiTtsKey,
+      gemini_model: settings.geminiModel,
+      gemini_api_url: settings.geminiApiUrl,
+      gemini_api_format: settings.geminiApiFormat,
+      voice: settings.mimoVoice,
+      source_lang: status?.source_lang || settings.sourceLang,
+      target_lang: status?.target_lang || settings.targetLang,
+      stream_mode: (status?.stream_mode as 'streaming' | 'batch') || 'streaming',
+      duration_mode: status?.duration_mode ?? settings.durationMode ?? 'adaptive',
+      original_audio_volume: volumeOverride ?? status?.original_audio_volume ?? settings.originalAudioVolume ?? 0.2,
+    }
+    await startTask(taskId, config)
+    await pollData()
+    if (!intervalRef.current) {
+      intervalRef.current = setInterval(pollData, 1500)
+    }
+  }
+
   const handleRetry = async () => {
     if (!taskId) return
     setIsRetrying(true)
     setError(null)
     try {
-      const config = {
-        gemini_api_key: settings.geminiApiKey,
-        mimo_api_key: settings.xiaomiTtsKey,
-        gemini_model: settings.geminiModel,
-        gemini_api_url: settings.geminiApiUrl,
-        gemini_api_format: settings.geminiApiFormat,
-        voice: settings.mimoVoice,
-        source_lang: status?.source_lang || settings.sourceLang,
-        target_lang: status?.target_lang || settings.targetLang,
-        stream_mode: (status?.stream_mode as 'streaming' | 'batch') || 'streaming',
-        duration_mode: status?.duration_mode ?? settings.durationMode ?? 'adaptive',
-        original_audio_volume: status?.original_audio_volume ?? settings.originalAudioVolume ?? 0.2,
-      }
-      await startTask(taskId, config)
-      await pollData()
-      if (!intervalRef.current) {
-        intervalRef.current = setInterval(pollData, 1500)
-      }
+      await resumeTask()
     } catch (err: any) {
       setError(err.message || '从断点恢复任务失败，请检查设置与网络')
     } finally {
       setIsRetrying(false)
     }
+  }
+
+  const handleSecurityResolve = async (action: SecurityAction, note: string, includeWarn: boolean) => {
+    const payload = await resolveTaskSecurity(taskId, { action, note, include_warn: includeWarn })
+    setSecurity(payload) // 不再拦截时面板随之收起
+    if (payload.report.level === 'block') return
+    try {
+      // 脱敏只改字幕，原声里仍有原话：续跑时把原声音量压到 0
+      await resumeTask(action === 'redact' ? 0 : undefined)
+      saveActiveTaskId(taskId)
+    } catch (err) {
+      setError(`已完成安全处置，但续跑失败：${err instanceof Error ? err.message : '请检查设置与网络'}`)
+    }
+  }
+
+  const handleSecurityAbort = () => {
+    clearActiveTaskId()
+    if (onNavigateToHistory) onNavigateToHistory()
+    else navigate('/')
   }
 
   const navigate = useNavigate()
@@ -231,6 +273,28 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
         }
         clearActiveTaskId()
         navigate(`/campaign/${s.campaign_id}`)
+        return
+      }
+
+      if (s.stage === 'security_hold') {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
+        if (s.campaign_id) {
+          // Agent 子任务统一在会话页处置
+          clearActiveTaskId()
+          navigate(`/campaign/${s.campaign_id}`)
+          return
+        }
+        setSecurityLoading(true)
+        try {
+          setSecurity(await getTaskSecurity(taskId))
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '读取安全检测结果失败')
+        } finally {
+          setSecurityLoading(false)
+        }
         return
       }
 
@@ -339,6 +403,18 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
             Bcut 字幕识别
           </span>
           <ChevronRight className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0" />
+          <span
+            className={`px-2.5 py-1 rounded-lg border font-semibold text-xs shadow-2xs inline-flex items-center gap-1 ${
+              status?.security?.level === 'block'
+                ? 'bg-rose-600 text-white border-rose-600'
+                : 'bg-emerald-600 text-white border-emerald-600'
+            }`}
+            title="字幕发往云端翻译前，先在本机离线检测国家秘密、军事、关键技术、个人隐私等内容"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            出境安全闸
+          </span>
+          <ChevronRight className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0" />
           <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 font-medium text-xs shadow-2xs">
             {currentModelDisplayName} ({getLanguageDisplayName(status?.source_lang || settings.sourceLang, true)} ➔ {getLanguageDisplayName(status?.target_lang || settings.targetLang)})
           </span>
@@ -346,6 +422,24 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
           <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 font-medium text-xs shadow-2xs">
             MiMo 语音克隆
           </span>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+          {status?.security ? (
+            <>
+              <SecurityStatusBadge summary={status.security} />
+              <span>
+                {status.security.level === 'block'
+                  ? '已在本机拦截，原文未发往云端，请在下方处置'
+                  : '识别结果已在本机完成出境检测，通过后才发往云端翻译；导出前还会复检'}
+              </span>
+            </>
+          ) : (
+            <span className="inline-flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              出境安全闸已就绪：字幕识别完成后将在本机离线检测，命中涉密 / 军事 / 隐私内容会暂停任务
+            </span>
+          )}
         </div>
       </div>
 
@@ -367,6 +461,17 @@ export default function ProcessingState({ taskId, onComplete, onNavigateToHistor
             <span>{isRetrying ? '正在从断点恢复...' : '一键重试 / 从断点继续'}</span>
           </button>
         </div>
+      )}
+
+      {status?.stage === 'security_hold' && !status.campaign_id && (security ? security.report.level === 'block' : securityLoading) && (
+        <SecurityHoldPanel
+          payload={security}
+          loading={securityLoading}
+          scopeHint="脱敏后续跑时原声音量会自动调为 0，可在成片页再调整。"
+          onResolve={handleSecurityResolve}
+          onAbort={handleSecurityAbort}
+          abortLabel="终止，返回作品档案"
+        />
       )}
 
       {status?.preview_ready && (

@@ -2,7 +2,7 @@
 from typing import Literal
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..config import get_user_settings, save_user_settings
 
@@ -22,6 +22,8 @@ class SettingsPayload(BaseModel):
     durationMode: Literal["speed_audio", "slow_video", "adaptive"] | None = None
     originalAudioVolume: float | None = None
     customGeminiModels: list[dict[str, str]] | None = None
+    # 出境安全闸自定义敏感词（单位名、项目代号等），仅在本地检测使用。
+    securityTerms: list[str] | None = Field(default=None, max_length=500)
 
 
 @router.get("/settings")
